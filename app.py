@@ -1,58 +1,58 @@
 from flask import Flask,request,jsonify,send_from_directory
-import requests,re,math,threading,time,sqlite3,os
+import requests,re,math,sqlite3,os,json
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; PotunResearch/0.7)"}
 JST=timezone(timedelta(hours=9))
-DB="/tmp/potun_v06.db"
-LOCK=threading.Lock()
+DB=os.environ.get("DATABASE_PATH","/var/data/potun.db" if os.path.isdir("/var/data") else "/tmp/potun.db")
 
-def db():
- c=sqlite3.connect(DB,timeout=30)
- c.row_factory=sqlite3.Row
- c.execute("PRAGMA busy_timeout=30000")
- c.execute("PRAGMA journal_mode=WAL")
+def con():
+ c=sqlite3.connect(DB,timeout=30);c.row_factory=sqlite3.Row
+ c.execute("PRAGMA busy_timeout=30000");c.execute("PRAGMA journal_mode=WAL")
  return c
+def init():
+ os.makedirs(os.path.dirname(DB),exist_ok=True)
+ c=con()
+ c.executescript("""
+ CREATE TABLE IF NOT EXISTS races(
+ race_key TEXT PRIMARY KEY,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,start_iso TEXT,
+ status TEXT DEFAULT 'reserved',created_at TEXT,result_checked INTEGER DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS snapshots(
+ race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,PRIMARY KEY(race_key,slot));
+ CREATE TABLE IF NOT EXISTS predictions(
+ race_key TEXT,horse INTEGER,rank INTEGER,score REAL,pop INTEGER,odds REAL,d1 REAL,d2 REAL,agree REAL,
+ created_at TEXT,PRIMARY KEY(race_key,horse));
+ CREATE TABLE IF NOT EXISTS results(
+ race_key TEXT PRIMARY KEY,first_horse INTEGER,second_horse INTEGER,third_horse INTEGER,
+ fetched_at TEXT,payload TEXT);
+ """);c.commit();c.close()
+init()
 
-def init_db():
- with LOCK:
-  c=db()
-  c.execute("""CREATE TABLE IF NOT EXISTS races(
-  id INTEGER PRIMARY KEY AUTOINCREMENT, race_key TEXT UNIQUE,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,
-  start_iso TEXT,status TEXT DEFAULT 'reserved',created_at TEXT)""")
-  c.execute("""CREATE TABLE IF NOT EXISTS snaps(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,
-  UNIQUE(race_key,slot))""")
-  c.commit();c.close()
-
-init_db()
-def fetch(path,q):
+def soup(path,q):
  r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status()
- r.encoding=r.apparent_encoding or r.encoding
- return BeautifulSoup(r.text,"html.parser")
+ r.encoding=r.apparent_encoding or r.encoding;return BeautifulSoup(r.text,"html.parser")
+def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
 
-def parse_win(s):
+def win(s):
  out={}
  for tr in s.find_all("tr"):
-  c=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
-  # locate horse number then first plausible odds later in row
-  for i,x in enumerate(c):
+  cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
+  for i,x in enumerate(cells):
    if re.fullmatch(r"\d{1,2}",x or ""):
     h=int(x)
-    if not 1<=h<=18: continue
+    if not 1<=h<=18:continue
     vals=[]
-    for z in c[i+1:]:
-     try: vals.append(float(z.replace(",","")))
-     except: pass
-    odds=next((v for v in vals if v>=1.0),None)
-    if odds is not None: out[h]=odds
+    for z in cells[i+1:]:
+     try:vals.append(float(z.replace(",","")))
+     except:pass
+    o=next((v for v in vals if v>=1),None)
+    if o is not None:out[h]=o
     break
  return [[h,o] for h,o in out.items()]
-
-def parse_combo(s,n):
+def combo(s,n):
  t=s.get_text(" ",strip=True).replace("→","-").replace("－","-")
  pat=r"(?<!\d)(\d{1,2})\s*-\s*(\d{1,2})"+(r"\s*-\s*(\d{1,2})" if n==3 else "")+r"\s+([\d,.]+)"
  d={}
@@ -62,18 +62,16 @@ def parse_combo(s,n):
   except:continue
   if o>0:d[hs]=list(hs)+[o]
  return list(d.values())
-
 def med(a):
  b=sorted(a);n=len(b)
  return 0 if not n else b[n//2] if n%2 else (b[n//2-1]+b[n//2])/2
-def robust_z(a):
+def rz(a):
  if not a:return []
  m=med(a);mad=med([abs(x-m) for x in a])
  return [0]*len(a) if mad<1e-9 else [(x-m)/(1.4826*mad) for x in a]
 def agg(a):
  a=sorted([x for x in a if x>0],reverse=True)
- return .5*(a[0] if len(a)>0 else 0)+.3*(a[1] if len(a)>1 else 0)+.2*(a[2] if len(a)>2 else 0)
-
+ return .5*(a[0] if a else 0)+.3*(a[1] if len(a)>1 else 0)+.2*(a[2] if len(a)>2 else 0)
 def analyse(W,Q,E,T):
  inv={h:1/o for h,o in W};sm=sum(inv.values());P={h:v/sm for h,v in inv.items()};od=dict(W)
  pop={h:i+1 for i,(h,o) in enumerate(sorted(W,key=lambda x:(x[1],x[0])))}
@@ -92,130 +90,101 @@ def analyse(W,Q,E,T):
    except:continue
    if pr>0 and o>0:mod.append(pr);act.append(1/o);hh.append(hs)
   if not hh:return
-  ms=sum(mod);aa=sum(act)
-  D=[math.log(max(a/aa,1e-15)/max(m/ms,1e-15)) for a,m in zip(act,mod)]
-  for z,hs in zip(robust_z(D),hh):
+  ms=sum(mod);aa=sum(act);D=[math.log(max(a/aa,1e-15)/max(m/ms,1e-15)) for a,m in zip(act,mod)]
+  for z,hs in zip(rz(D),hh):
    for h in hs:
     if h in B:B[h][k].append(z)
  market(Q,"Q");market(E,"E");market(T,"T")
- out=[]
- for h,b in B.items():
-  q,e,t=agg(b["Q"]),agg(b["E"]),agg(b["T"])
-  out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,"base":(q+e+t)/3})
- return out
+ return [{"horse":h,"odds":od[h],"pop":pop[h],"Q":agg(b["Q"]),"E":agg(b["E"]),"T":agg(b["T"]),
+          "base":(agg(b["Q"])+agg(b["E"])+agg(b["T"]))/3} for h,b in B.items()]
+def take(r):
+ q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
+ cnt={"win":len(W),"Q":len(Q),"E":len(E),"T":len(T)}
+ if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全 "+str(cnt))
+ return {"rows":analyse(W,Q,E,T),"counts":cnt,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
 
-def snapshot(r):
- q={"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
- W=parse_win(fetch("OddsTanFuku",q));Q=parse_combo(fetch("OddsUmLenFuku",q),2)
- E=parse_combo(fetch("OddsUmLenTan",q),2);T=parse_combo(fetch("Odds3LenTan",q),3)
- counts={"win":len(W),"Q":len(Q),"E":len(E),"T":len(T)}
- if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全")
- return {"rows":analyse(W,Q,E,T),"counts":counts,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+def predictions(key):
+ c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=?",(key,)).fetchall();c.close()
+ S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+ if not all(x in S for x in ("15","10","5")):return []
+ def mp(x):return {str(r["horse"]):r for r in x["rows"]}
+ a,b,z=mp(S["15"]),mp(S["10"]),mp(S["5"]);out=[]
+ for h,x in z.items():
+  if h not in a or h not in b:continue
+  d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
+  persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
+  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
+  level=math.tanh(max(0,x["base"])/2);accel=math.tanh(max(0,d2)/1.5)
+  score=round(100*(.40*level+.30*accel+.15*persist+.15*agree))
+  out.append({**x,"d1":d1,"d2":d2,"agree":agree,"score":score})
+ return sorted(out,key=lambda x:-x["score"])
 
-def worker():
- while True:
-  try:
-   now=datetime.now(JST)
-   c=db()
-   races=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='done'").fetchall()]
-   c.close()
-   for r in races:
-    start=datetime.fromisoformat(r["start_iso"])
-    mins=(start-now).total_seconds()/60
-    for slot in (15,10,5):
-     c=db()
-     exists=c.execute("SELECT 1 FROM snaps WHERE race_key=? AND slot=?",(r["race_key"],slot)).fetchone()
-     c.close()
-     if not exists and slot-1.0 <= mins <= slot+0.25:
-      try:
-       import json
-       data=snapshot(r)
-       with LOCK:
-        c=db()
-        c.execute("INSERT OR IGNORE INTO snaps(race_key,slot,fetched_at,payload) VALUES(?,?,?,?)",
-                  (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)))
-        c.commit();c.close()
-      except Exception:
-       pass
-    if mins < 3:
-     with LOCK:
-      c=db();c.execute("UPDATE races SET status='done' WHERE race_key=?",(r["race_key"],));c.commit();c.close()
-  except Exception:
-   pass
-  time.sleep(15)
+def save_predictions(key):
+ A=predictions(key);C=[x for x in A if x["score"]>=65 and x["agree"]>=2/3 and x["d2"]>0][:3]
+ c=con()
+ for i,x in enumerate(C,1):
+  c.execute("""INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?)""",
+   (key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
+ c.commit();c.close();return C
 
+def parse_result(s):
+ # Results page normally contains finishing-position rows. Require first 3 distinct horse numbers.
+ rows=[]
+ for tr in s.find_all("tr"):
+  cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
+  nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
+  if len(nums)>=2 and nums[0] in (1,2,3) and 1<=nums[1]<=18:rows.append((nums[0],nums[1]))
+ d=dict(rows)
+ return [d.get(1),d.get(2),d.get(3)]
 
-
-
-def run_due_checks():
- now=datetime.now(JST)
- c=db()
- races=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='done'").fetchall()]
- c.close()
- events=[]
- for r in races:
-  start=datetime.fromisoformat(r["start_iso"])
-  mins=(start-now).total_seconds()/60
+def due():
+ now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='complete'").fetchall()];c.close();ev=[]
+ for r in rr:
+  mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
   for slot in (15,10,5):
-   c=db();exists=c.execute("SELECT 1 FROM snaps WHERE race_key=? AND slot=?",(r["race_key"],slot)).fetchone();c.close()
-   # Allow late catch-up within 90 sec so a request near target still records.
-   if not exists and slot-1.5 <= mins <= slot+0.5:
+   c=con();ex=c.execute("SELECT 1 FROM snapshots WHERE race_key=? AND slot=?",(r["race_key"],slot)).fetchone();c.close()
+   if not ex and slot-2<=mins<=slot+1:
     try:
-     import json
-     data=snapshot(r)
-     with LOCK:
-      c=db();c.execute("INSERT OR IGNORE INTO snaps(race_key,slot,fetched_at,payload) VALUES(?,?,?,?)",
-       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close()
-     events.append(f'{r["race_key"]}:{slot}')
-    except Exception as e:
-     events.append(f'{r["race_key"]}:{slot}:ERR:{e}')
-  if mins < 3:
-   with LOCK:
-    c=db();c.execute("UPDATE races SET status='done' WHERE race_key=?",(r["race_key"],));c.commit();c.close()
- return events
-
-@app.route("/api/tick",methods=["GET","POST"])
-def api_tick():
- try:
-  return jsonify(ok=True,events=run_due_checks(),at=datetime.now(JST).isoformat(timespec="seconds"))
- except Exception as e:
-  return jsonify(ok=False,error=f"{type(e).__name__}: {e}"),500
+     data=take(r);c=con();c.execute("INSERT OR IGNORE INTO snapshots VALUES(?,?,?,?)",(r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
+     if slot==5:save_predictions(r["race_key"])
+    except Exception as e:ev.append("ERR snapshot "+str(e))
+  if mins < -3 and not r["result_checked"]:
+   try:
+    rs=parse_result(soup("RaceMarkTable",qfor(r)))
+    if all(rs):
+     c=con();c.execute("INSERT OR REPLACE INTO results VALUES(?,?,?,?,?,?)",(r["race_key"],*rs,now.isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=?",(r["race_key"],));c.commit();c.close();ev.append(f'{r["race_key"]}:RESULT:{rs}')
+   except Exception as e:ev.append("ERR result "+str(e))
+ return ev
 
 @app.route("/")
 def home():return send_from_directory(".","index.html")
-
 @app.route("/api/reserve",methods=["POST"])
 def reserve():
  try:
-  x=request.get_json(force=True) or {}
-  for k in ("date","baba","baba_name","race","start_iso"):
-   if not x.get(k): return jsonify(error=f"missing {k}"),400
-  start=datetime.fromisoformat(str(x["start_iso"]))
-  if start.tzinfo is None: start=start.replace(tzinfo=JST)
-  key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}'
-  with LOCK:
-   c=db()
-   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at)
-   VALUES(?,?,?,?,?,?,?,?)
-   ON CONFLICT(race_key) DO UPDATE SET
-    start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
-    (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),start.isoformat(),"reserved",datetime.now(JST).isoformat()))
-   c.commit();c.close()
-  return jsonify(ok=True,race_key=key,start_iso=start.isoformat())
- except Exception as e:
-  return jsonify(error=f"予約保存エラー: {type(e).__name__}: {e}"),500
-
+  x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"])
+  c=con();c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked)
+  VALUES(?,?,?,?,?,?,?,?,0) ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
+  (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()));c.commit();c.close()
+  return jsonify(ok=True,race_key=key)
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
+@app.route("/api/tick",methods=["GET","POST"])
+def tick():
+ try:return jsonify(ok=True,events=due(),at=datetime.now(JST).isoformat())
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/status")
 def status():
- import json
- key=request.args["race_key"];c=db()
- r=c.execute("SELECT * FROM races WHERE race_key=?",(key,)).fetchone()
- ss=c.execute("SELECT * FROM snaps WHERE race_key=? ORDER BY slot DESC",(key,)).fetchall();c.close()
- if not r:return jsonify(error="not found"),404
- snaps={str(s["slot"]):json.loads(s["payload"]) for s in ss}
- return jsonify(race=dict(r),snaps=snaps)
-
-@app.route("/api/list")
-def list_races():
- c=db();rr=[dict(x) for x in c.execute("SELECT * FROM races ORDER BY start_iso DESC LIMIT 20").fetchall()];c.close()
- return jsonify(races=rr)
+ key=request.args["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=?",(key,)).fetchone()
+ ss=c.execute("SELECT * FROM snapshots WHERE race_key=? ORDER BY slot DESC",(key,)).fetchall()
+ pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(key,)).fetchall()]
+ rs=c.execute("SELECT * FROM results WHERE race_key=?",(key,)).fetchone();c.close()
+ return jsonify(race=dict(r) if r else None,snaps={str(x["slot"]):json.loads(x["payload"]) for x in ss},predictions=pp,result=dict(rs) if rs else None)
+@app.route("/api/learning")
+def learning():
+ c=con()
+ n=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"]
+ p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)""").fetchall();c.close()
+ total=len(p);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in p)
+ bins={}
+ for x in p:
+  b=f'{int(x["score"]//10)*10}-{int(x["score"]//10)*10+9}';bins.setdefault(b,[0,0]);bins[b][0]+=1;bins[b][1]+=x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"])
+ return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),score_bins={k:{"n":v[0],"hits":v[1],"rate":v[1]/v[0]} for k,v in bins.items()})
