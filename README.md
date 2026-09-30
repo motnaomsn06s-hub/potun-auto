@@ -1,9 +1,8 @@
-# 地方ポツン AUTO v0.6.2 SERVER
-SQLite database-is-locked 修正版。
-- WALモード
-- busy_timeout 30秒
-- DB初期化を起動時1回だけに変更
-- NAR取得中はDB接続を保持しない
-- 予約/スナップショット書込みをLOCKで直列化
-- 15/10/5分前のサーバー監視は継続
-注意: Render Freeのスリープと /tmp DB の非永続性は別制約として残ります。
+# 地方ポツン AUTO v0.6.3
+v0.6.2 の「サーバー応答がJSONではありません」対策版。
+- gunicorn内バックグラウンドthread自動起動を停止（予約APIとの競合を除去）
+- /api/tick を追加
+- 予約APIはJSONエラーを返す
+- 画面表示中はstatus更新時にtick
+重要: 画面を完全に閉じた状態で15/10/5分前を確実に動かすには、外部Cronから /api/tick を定期実行する必要があります。
+Render Freeだけでは常時バックグラウンド監視は保証できません。

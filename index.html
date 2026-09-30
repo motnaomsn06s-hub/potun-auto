@@ -1,6 +1,6 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>地方ポツン AUTO v0.6.2 SERVER</title>
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>地方ポツン AUTO v0.6.3 SERVER</title>
 <style>body{margin:0;background:#08111f;color:#eef4ff;font-family:-apple-system,sans-serif}.w{max-width:920px;margin:auto;padding:20px}.c{background:#111c2e;border:1px solid #293952;border-radius:16px;padding:16px;margin:13px 0}.row{display:flex;gap:8px;flex-wrap:wrap}input,select,button{padding:12px;border:1px solid #354862;border-radius:10px;background:#091525;color:#fff}button{background:#e8b94d;color:#171207;font-weight:800}.m{font-size:12px;color:#9aabc2;line-height:1.6}.slots,.top{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.slot,.pick{background:#091525;padding:13px;border-radius:12px}.ok{color:#76d69a}.num{font-size:30px;color:#e8b94d;font-weight:900}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px;border-bottom:1px solid #293952;text-align:right;white-space:nowrap}td:first-child,th:first-child{text-align:left}@media(max-width:650px){.slots,.top{grid-template-columns:1fr}}</style></head>
-<body><div class="w"><h1>地方ポツン AUTO v0.6.2 SERVER</h1><p class="m">レースを予約すれば、画面を閉じてもサーバー側で15分前・10分前・5分前を監視します。</p>
+<body><div class="w"><h1>地方ポツン AUTO v0.6.3 SERVER</h1><p class="m">レースを予約すれば、画面を閉じてもサーバー側で15分前・10分前・5分前を監視します。</p>
 <div class="c"><div class="row"><input id="d" type="date"><select id="b"><option value="3">帯広</option><option value="10">盛岡</option><option value="11">水沢</option><option value="18">浦和</option><option value="19">船橋</option><option value="20">大井</option><option value="21">川崎</option><option value="22">金沢</option><option value="23">笠松</option><option value="24">名古屋</option><option value="27">園田</option><option value="28">姫路</option><option value="31">高知</option><option value="36">門別</option><option value="55">佐賀</option></select><select id="r"></select><input id="t" type="time"><button id="reserve">このレースを予約</button></div><p id="msg" class="m">公式発走時刻を入力して予約してください。</p></div>
 <div class="c"><b>サーバー取得状況</b><div class="slots"><div class="slot"><b>15分前</b><div id="s15" class="m">未取得</div></div><div class="slot"><b>10分前</b><div id="s10" class="m">未取得</div></div><div class="slot"><b>5分前</b><div id="s5" class="m">未取得</div></div></div></div>
 <div class="c"><b>5分前 最終候補 TOP3</b><div id="top" class="top"><span class="m">3時点待ち</span></div></div>
@@ -10,7 +10,8 @@ const $=x=>document.getElementById(x);$('d').value=new Date().toISOString().slic
 function map(s){let o={};(s?.rows||[]).forEach(x=>o[x.horse]=x);return o}
 function calc(S){if(!S["15"]||!S["10"]||!S["5"])return[];let a=map(S["15"]),b=map(S["10"]),c=map(S["5"]),out=[];for(let h in c){if(!a[h]||!b[h])continue;let d1=b[h].base-a[h].base,d2=c[h].base-b[h].base,persist=[a[h].base,b[h].base,c[h].base].filter(x=>x>0).length/3,agree=[c[h].Q,c[h].E,c[h].T].filter(x=>x>0).length/3;let level=Math.tanh(Math.max(0,c[h].base)/2),accel=Math.tanh(Math.max(0,d2)/1.5);let score=Math.round(100*(.40*level+.30*accel+.15*persist+.15*agree));out.push({...c[h],d1,d2,agree,score})}return out.sort((x,y)=>y.score-x.score)}
 function render(S){[15,10,5].forEach(s=>{$('s'+s).innerHTML=S[String(s)]?`<span class="ok">保存済</span><br>${S[String(s)].fetched_at}`:"未取得"});let A=calc(S);if(!A.length){$('top').innerHTML='<span class="m">3時点待ち</span>';$('tbl').innerHTML="";return}let C=A.filter(x=>x.score>=65&&x.agree>=2/3&&x.d2>0).slice(0,3);$('top').innerHTML=C.length?C.map((x,i)=>`<div class="pick"><b>${i+1}位 ${x.horse}番</b><div class="num">${x.score}</div><div>${x.pop}人気・${x.odds.toFixed(1)}倍</div><div class="m">10→5分 Δ ${x.d2>=0?"+":""}${x.d2.toFixed(2)} / 一致 ${Math.round(x.agree*3)}/3</div></div>`).join(""):"<div class=pick>該当なし</div>";$('tbl').innerHTML='<table><tr><th>馬</th><th>人気</th><th>単勝</th><th>最終</th><th>15→10</th><th>10→5</th><th>一致</th></tr>'+A.map(x=>`<tr><td>${x.horse}</td><td>${x.pop}</td><td>${x.odds.toFixed(1)}</td><td><b>${x.score}</b></td><td>${x.d1.toFixed(2)}</td><td>${x.d2.toFixed(2)}</td><td>${Math.round(x.agree*3)}/3</td></tr>`).join("")+"</table>"}
-async function refresh(){if(!KEY)return;let q=await fetch("/api/status?race_key="+encodeURIComponent(KEY),{cache:"no-store"});let j=await q.json();if(q.ok){render(j.snaps);$('msg').textContent=`予約済：${j.race.baba_name} ${j.race.race}R ${j.race.start_iso}`}}
+async function refresh(){if(!KEY)return;try{await fetch("/api/tick",{method:"POST",cache:"no-store"})}catch(_){}
+let q=await fetch("/api/status?race_key="+encodeURIComponent(KEY),{cache:"no-store"});let j=await q.json();if(q.ok){render(j.snaps);$('msg').textContent=`予約済：${j.race.baba_name} ${j.race.race}R ${j.race.start_iso}`}}
 $('reserve').addEventListener("click",async function(e){
  e.preventDefault();
  const btn=this;
@@ -19,8 +20,10 @@ $('reserve').addEventListener("click",async function(e){
  try{
   const opt=$('b').options[$('b').selectedIndex];
   const iso=$('d').value+"T"+$('t').value+":00+09:00";
-  const res=await fetch("/api/reserve",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},cache:"no-store",
+  const ctl=new AbortController();const timeout=setTimeout(()=>ctl.abort(),12000);
+  const res=await fetch("/api/reserve",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},cache:"no-store",signal:ctl.signal,
    body:JSON.stringify({date:$('d').value,baba:String($('b').value),baba_name:opt.text,race:Number($('r').value),start_iso:iso})});
+  clearTimeout(timeout);
   const raw=await res.text();let j={};
   try{j=JSON.parse(raw)}catch(_){throw new Error("サーバー応答がJSONではありません: "+raw.slice(0,120))}
   if(!res.ok||!j.ok)throw new Error(j.error||("HTTP "+res.status));

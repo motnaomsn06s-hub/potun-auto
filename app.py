@@ -144,7 +144,42 @@ def worker():
    pass
   time.sleep(15)
 
-threading.Thread(target=worker,daemon=True).start()
+
+
+
+def run_due_checks():
+ now=datetime.now(JST)
+ c=db()
+ races=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='done'").fetchall()]
+ c.close()
+ events=[]
+ for r in races:
+  start=datetime.fromisoformat(r["start_iso"])
+  mins=(start-now).total_seconds()/60
+  for slot in (15,10,5):
+   c=db();exists=c.execute("SELECT 1 FROM snaps WHERE race_key=? AND slot=?",(r["race_key"],slot)).fetchone();c.close()
+   # Allow late catch-up within 90 sec so a request near target still records.
+   if not exists and slot-1.5 <= mins <= slot+0.5:
+    try:
+     import json
+     data=snapshot(r)
+     with LOCK:
+      c=db();c.execute("INSERT OR IGNORE INTO snaps(race_key,slot,fetched_at,payload) VALUES(?,?,?,?)",
+       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close()
+     events.append(f'{r["race_key"]}:{slot}')
+    except Exception as e:
+     events.append(f'{r["race_key"]}:{slot}:ERR:{e}')
+  if mins < 3:
+   with LOCK:
+    c=db();c.execute("UPDATE races SET status='done' WHERE race_key=?",(r["race_key"],));c.commit();c.close()
+ return events
+
+@app.route("/api/tick",methods=["GET","POST"])
+def api_tick():
+ try:
+  return jsonify(ok=True,events=run_due_checks(),at=datetime.now(JST).isoformat(timespec="seconds"))
+ except Exception as e:
+  return jsonify(ok=False,error=f"{type(e).__name__}: {e}"),500
 
 @app.route("/")
 def home():return send_from_directory(".","index.html")
