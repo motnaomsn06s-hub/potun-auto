@@ -135,12 +135,23 @@ def home():return send_from_directory(".","index.html")
 
 @app.route("/api/reserve",methods=["POST"])
 def reserve():
- x=request.get_json();start=datetime.fromisoformat(x["start_iso"])
- key=f'{x["date"]}:{x["baba"]}:{x["race"]}'
- c=db();c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,created_at)
- VALUES(?,?,?,?,?,?,?) ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
- (key,x["date"],x["baba"],x["baba_name"],int(x["race"]),start.isoformat(),datetime.now(JST).isoformat()))
- c.commit();c.close();return jsonify(ok=True,race_key=key)
+ try:
+  x=request.get_json(force=True) or {}
+  for k in ("date","baba","baba_name","race","start_iso"):
+   if not x.get(k): return jsonify(error=f"missing {k}"),400
+  start=datetime.fromisoformat(str(x["start_iso"]))
+  if start.tzinfo is None: start=start.replace(tzinfo=JST)
+  key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}'
+  c=db()
+  c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at)
+  VALUES(?,?,?,?,?,?,?,?)
+  ON CONFLICT(race_key) DO UPDATE SET
+   start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
+   (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),start.isoformat(),"reserved",datetime.now(JST).isoformat()))
+  c.commit();c.close()
+  return jsonify(ok=True,race_key=key,start_iso=start.isoformat())
+ except Exception as e:
+  return jsonify(error=f"予約保存エラー: {type(e).__name__}: {e}"),500
 
 @app.route("/api/status")
 def status():
