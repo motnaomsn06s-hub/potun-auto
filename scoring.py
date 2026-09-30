@@ -152,7 +152,7 @@ def signal_score(
     return round(max(0.0, min(100.0, score)), 1)
 
 
-def rank_signals(horses):
+def score_horses(horses):
     """
     horses:
     [
