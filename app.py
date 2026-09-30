@@ -11,15 +11,24 @@ DB="/tmp/potun_v06.db"
 LOCK=threading.Lock()
 
 def db():
- c=sqlite3.connect(DB,timeout=10);c.row_factory=sqlite3.Row
- c.execute("""CREATE TABLE IF NOT EXISTS races(
- id INTEGER PRIMARY KEY AUTOINCREMENT, race_key TEXT UNIQUE,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,
- start_iso TEXT,status TEXT DEFAULT 'reserved',created_at TEXT)""")
- c.execute("""CREATE TABLE IF NOT EXISTS snaps(
- id INTEGER PRIMARY KEY AUTOINCREMENT,race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,
- UNIQUE(race_key,slot))""")
- c.commit();return c
+ c=sqlite3.connect(DB,timeout=30)
+ c.row_factory=sqlite3.Row
+ c.execute("PRAGMA busy_timeout=30000")
+ c.execute("PRAGMA journal_mode=WAL")
+ return c
 
+def init_db():
+ with LOCK:
+  c=db()
+  c.execute("""CREATE TABLE IF NOT EXISTS races(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, race_key TEXT UNIQUE,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,
+  start_iso TEXT,status TEXT DEFAULT 'reserved',created_at TEXT)""")
+  c.execute("""CREATE TABLE IF NOT EXISTS snaps(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,
+  UNIQUE(race_key,slot))""")
+  c.commit();c.close()
+
+init_db()
 def fetch(path,q):
  r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status()
  r.encoding=r.apparent_encoding or r.encoding
@@ -106,26 +115,33 @@ def snapshot(r):
 def worker():
  while True:
   try:
-   now=datetime.now(JST);c=db()
-   races=c.execute("SELECT * FROM races WHERE status!='done'").fetchall()
+   now=datetime.now(JST)
+   c=db()
+   races=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='done'").fetchall()]
+   c.close()
    for r in races:
     start=datetime.fromisoformat(r["start_iso"])
     mins=(start-now).total_seconds()/60
     for slot in (15,10,5):
+     c=db()
      exists=c.execute("SELECT 1 FROM snaps WHERE race_key=? AND slot=?",(r["race_key"],slot)).fetchone()
-     # server checks every 15 sec; 75 sec capture window
+     c.close()
      if not exists and slot-1.0 <= mins <= slot+0.25:
       try:
        import json
        data=snapshot(r)
-       c.execute("INSERT OR IGNORE INTO snaps(race_key,slot,fetched_at,payload) VALUES(?,?,?,?)",
-                 (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)))
-       c.commit()
-      except Exception: pass
+       with LOCK:
+        c=db()
+        c.execute("INSERT OR IGNORE INTO snaps(race_key,slot,fetched_at,payload) VALUES(?,?,?,?)",
+                  (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)))
+        c.commit();c.close()
+      except Exception:
+       pass
     if mins < 3:
-     c.execute("UPDATE races SET status='done' WHERE race_key=?",(r["race_key"],));c.commit()
-   c.close()
-  except Exception: pass
+     with LOCK:
+      c=db();c.execute("UPDATE races SET status='done' WHERE race_key=?",(r["race_key"],));c.commit();c.close()
+  except Exception:
+   pass
   time.sleep(15)
 
 threading.Thread(target=worker,daemon=True).start()
@@ -142,13 +158,14 @@ def reserve():
   start=datetime.fromisoformat(str(x["start_iso"]))
   if start.tzinfo is None: start=start.replace(tzinfo=JST)
   key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}'
-  c=db()
-  c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at)
-  VALUES(?,?,?,?,?,?,?,?)
-  ON CONFLICT(race_key) DO UPDATE SET
-   start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
-   (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),start.isoformat(),"reserved",datetime.now(JST).isoformat()))
-  c.commit();c.close()
+  with LOCK:
+   c=db()
+   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at)
+   VALUES(?,?,?,?,?,?,?,?)
+   ON CONFLICT(race_key) DO UPDATE SET
+    start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
+    (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),start.isoformat(),"reserved",datetime.now(JST).isoformat()))
+   c.commit();c.close()
   return jsonify(ok=True,race_key=key,start_iso=start.isoformat())
  except Exception as e:
   return jsonify(error=f"予約保存エラー: {type(e).__name__}: {e}"),500
