@@ -1,10 +1,7 @@
 services:
   - type: web
-    name: chihou-potun-lab
+    name: potun-auto
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.13.5
