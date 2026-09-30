@@ -2,7 +2,7 @@ from flask import Flask,request,jsonify,send_from_directory
 import requests,re,math,sqlite3,os,json
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
-
+from scoring import score_horses
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
 UA={"User-Agent":"Mozilla/5.0 (compatible; PotunResearch/0.7)"}
