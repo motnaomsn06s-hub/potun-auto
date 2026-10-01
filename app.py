@@ -27,20 +27,25 @@ def soup(path,q):
  return BeautifulSoup(r.text,"html.parser")
 def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
 def win(s):
+ # NAR OddsTanFuku table starts with: 人気 / 馬番 / 印 / 馬名 / 単勝オッズ / 複勝オッズ.
+ # The old parser incorrectly treated the first integer (人気) as 馬番.
  out={}
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
-  for i,x in enumerate(cells):
-   if re.fullmatch(r"\d{1,2}",x or ""):
-    h=int(x)
-    if not 1<=h<=18:continue
-    vals=[]
-    for z in cells[i+1:]:
-     try:vals.append(float(z.replace(",","")))
-     except:pass
-    o=next((v for v in vals if v>=1),None)
-    if o is not None:out[h]=o
-    break
+  if len(cells)<5:continue
+  if not re.fullmatch(r"\d{1,2}",cells[0] or ""):continue
+  if not re.fullmatch(r"\d{1,2}",cells[1] or ""):continue
+  h=int(cells[1])
+  if not 1<=h<=18:continue
+  o=None
+  # Prefer the single-win-odds column after horse name.
+  for z in cells[4:]:
+   m=re.search(r"(?<!\d)(\d+(?:\.\d+)?)(?!\d)",z.replace(",",""))
+   if m:
+    v=float(m.group(1))
+    if v>=1:
+     o=v;break
+  if o is not None:out[h]=o
  return [[h,o] for h,o in out.items()]
 def combo(s,n):
  t=s.get_text(" ",strip=True).replace("→","-").replace("－","-")
