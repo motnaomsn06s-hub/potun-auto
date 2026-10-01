@@ -2,40 +2,30 @@ from flask import Flask,request,jsonify,send_from_directory
 import requests,re,math,sqlite3,os,json
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
-from scoring import score_horses
+
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; PotunResearch/0.7)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.8)"}
 JST=timezone(timedelta(hours=9))
 DB=os.environ.get("DATABASE_PATH","/var/data/potun.db" if os.path.isdir("/var/data") else "/tmp/potun.db")
 
 def con():
  c=sqlite3.connect(DB,timeout=30);c.row_factory=sqlite3.Row
- c.execute("PRAGMA busy_timeout=30000");c.execute("PRAGMA journal_mode=WAL")
- return c
+ c.execute("PRAGMA busy_timeout=30000");c.execute("PRAGMA journal_mode=WAL");return c
 def init():
- os.makedirs(os.path.dirname(DB),exist_ok=True)
- c=con()
+ os.makedirs(os.path.dirname(DB),exist_ok=True);c=con()
  c.executescript("""
- CREATE TABLE IF NOT EXISTS races(
- race_key TEXT PRIMARY KEY,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,start_iso TEXT,
- status TEXT DEFAULT 'reserved',created_at TEXT,result_checked INTEGER DEFAULT 0);
- CREATE TABLE IF NOT EXISTS snapshots(
- race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,PRIMARY KEY(race_key,slot));
- CREATE TABLE IF NOT EXISTS predictions(
- race_key TEXT,horse INTEGER,rank INTEGER,score REAL,pop INTEGER,odds REAL,d1 REAL,d2 REAL,agree REAL,
- created_at TEXT,PRIMARY KEY(race_key,horse));
- CREATE TABLE IF NOT EXISTS results(
- race_key TEXT PRIMARY KEY,first_horse INTEGER,second_horse INTEGER,third_horse INTEGER,
- fetched_at TEXT,payload TEXT);
+ CREATE TABLE IF NOT EXISTS races(race_key TEXT PRIMARY KEY,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,start_iso TEXT,status TEXT DEFAULT 'reserved',created_at TEXT,result_checked INTEGER DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS snapshots(race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,PRIMARY KEY(race_key,slot));
+ CREATE TABLE IF NOT EXISTS predictions(race_key TEXT,horse INTEGER,rank INTEGER,score REAL,pop INTEGER,odds REAL,d1 REAL,d2 REAL,agree REAL,created_at TEXT,PRIMARY KEY(race_key,horse));
+ CREATE TABLE IF NOT EXISTS results(race_key TEXT PRIMARY KEY,first_horse INTEGER,second_horse INTEGER,third_horse INTEGER,fetched_at TEXT,payload TEXT);
  """);c.commit();c.close()
 init()
 
 def soup(path,q):
- r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status()
- r.encoding=r.apparent_encoding or r.encoding;return BeautifulSoup(r.text,"html.parser")
+ r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status();r.encoding=r.apparent_encoding or r.encoding
+ return BeautifulSoup(r.text,"html.parser")
 def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
-
 def win(s):
  out={}
  for tr in s.find_all("tr"):
@@ -63,15 +53,12 @@ def combo(s,n):
   if o>0:d[hs]=list(hs)+[o]
  return list(d.values())
 def med(a):
- b=sorted(a);n=len(b)
- return 0 if not n else b[n//2] if n%2 else (b[n//2-1]+b[n//2])/2
+ b=sorted(a);n=len(b);return 0 if not n else b[n//2] if n%2 else (b[n//2-1]+b[n//2])/2
 def rz(a):
  if not a:return []
- m=med(a);mad=med([abs(x-m) for x in a])
- return [0]*len(a) if mad<1e-9 else [(x-m)/(1.4826*mad) for x in a]
+ m=med(a);mad=med([abs(x-m) for x in a]);return [0]*len(a) if mad<1e-9 else [(x-m)/(1.4826*mad) for x in a]
 def agg(a):
- a=sorted([x for x in a if x>0],reverse=True)
- return .5*(a[0] if a else 0)+.3*(a[1] if len(a)>1 else 0)+.2*(a[2] if len(a)>2 else 0)
+ a=sorted([x for x in a if x>0],reverse=True);return .5*(a[0] if a else 0)+.3*(a[1] if len(a)>1 else 0)+.2*(a[2] if len(a)>2 else 0)
 def analyse(W,Q,E,T):
  inv={h:1/o for h,o in W};sm=sum(inv.values());P={h:v/sm for h,v in inv.items()};od=dict(W)
  pop={h:i+1 for i,(h,o) in enumerate(sorted(W,key=lambda x:(x[1],x[0])))}
@@ -95,13 +82,24 @@ def analyse(W,Q,E,T):
    for h in hs:
     if h in B:B[h][k].append(z)
  market(Q,"Q");market(E,"E");market(T,"T")
- return [{"horse":h,"odds":od[h],"pop":pop[h],"Q":agg(b["Q"]),"E":agg(b["E"]),"T":agg(b["T"]),
-          "base":(agg(b["Q"])+agg(b["E"])+agg(b["T"]))/3} for h,b in B.items()]
+ return [{"horse":h,"odds":od[h],"pop":pop[h],"Q":agg(b["Q"]),"E":agg(b["E"]),"T":agg(b["T"]),"base":(agg(b["Q"])+agg(b["E"])+agg(b["T"]))/3} for h,b in B.items()]
 def take(r):
  q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
  cnt={"win":len(W),"Q":len(Q),"E":len(E),"T":len(T)}
  if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全 "+str(cnt))
  return {"rows":analyse(W,Q,E,T),"counts":cnt,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+
+def point_signals(payload,prev=None):
+ rows=payload.get("rows",[]);pm={str(x["horse"]):x for x in (prev or {}).get("rows",[])}
+ raw=[]
+ for x in rows:
+  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
+  level=math.tanh(max(0,x["base"])/2)
+  delta=x["base"]-pm.get(str(x["horse"]),x)["base"] if pm else 0
+  move=math.tanh(max(0,delta)/1.5) if pm else 0
+  score=round(100*((.72 if not pm else .52)*level+(.0 if not pm else .28)*move+.20*agree))
+  raw.append({**x,"delta":delta,"agree":agree,"score":max(0,min(100,score))})
+ return sorted(raw,key=lambda x:-x["score"])[:3]
 
 def predictions(key):
  c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=?",(key,)).fetchall();c.close()
@@ -111,34 +109,23 @@ def predictions(key):
  a,b,z=mp(S["15"]),mp(S["10"]),mp(S["5"]);out=[]
  for h,x in z.items():
   if h not in a or h not in b:continue
-  d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
-  persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
-  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
-  level=math.tanh(max(0,x["base"])/2);accel=math.tanh(max(0,d2)/1.5)
-  score=round(100*(.40*level+.30*accel+.15*persist+.15*agree))
-  out.append({**x,"d1":d1,"d2":d2,"agree":agree,"score":score})
+  d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"];persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
+  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3;level=math.tanh(max(0,x["base"])/2);accel=math.tanh(max(0,d2)/1.5)
+  score=round(100*(.40*level+.30*accel+.15*persist+.15*agree));out.append({**x,"d1":d1,"d2":d2,"agree":agree,"score":score})
  return sorted(out,key=lambda x:-x["score"])
-
 def save_predictions(key):
- A=predictions(key);C=[x for x in A if x["score"]>=65 and x["agree"]>=2/3 and x["d2"]>0][:3]
- c=con()
- for i,x in enumerate(C,1):
-  c.execute("""INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?)""",
-   (key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
+ A=predictions(key);C=[x for x in A if x["score"]>=65 and x["agree"]>=2/3 and x["d2"]>0][:3];c=con()
+ c.execute("DELETE FROM predictions WHERE race_key=?",(key,))
+ for i,x in enumerate(C,1):c.execute("INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?)",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
-
 def parse_result(s):
- # Results page normally contains finishing-position rows. Require first 3 distinct horse numbers.
  rows=[]
  for tr in s.find_all("tr"):
-  cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
-  nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
+  cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])];nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
   if len(nums)>=2 and nums[0] in (1,2,3) and 1<=nums[1]<=18:rows.append((nums[0],nums[1]))
- d=dict(rows)
- return [d.get(1),d.get(2),d.get(3)]
-
+ d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 def due():
- now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='complete'").fetchall()];c.close();ev=[]
+ now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved'").fetchall()];c.close();ev=[]
  for r in rr:
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
   for slot in (15,10,5):
@@ -161,11 +148,28 @@ def home():return send_from_directory(".","index.html")
 @app.route("/api/reserve",methods=["POST"])
 def reserve():
  try:
-  x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"])
-  c=con();c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked)
-  VALUES(?,?,?,?,?,?,?,?,0) ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved'""",
-  (key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()));c.commit();c.close()
-  return jsonify(ok=True,race_key=key)
+  x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"]);c=con()
+  c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(?,?,?,?,?,?,?,?,0)
+  ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
+  c.commit();c.close();return jsonify(ok=True,race_key=key)
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
+@app.route("/api/races")
+def races():
+ c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' ORDER BY start_iso DESC LIMIT 50").fetchall()];out=[]
+ for r in rr:
+  ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=?",(r["race_key"],)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+  stages={}
+  if "15" in S:stages["15"]=point_signals(S["15"])
+  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
+  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(r["race_key"],)).fetchall()]
+  rs=c.execute("SELECT * FROM results WHERE race_key=?",(r["race_key"],)).fetchone()
+  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"result":dict(rs) if rs else None})
+ c.close();return jsonify(races=out)
+@app.route("/api/cancel",methods=["POST"])
+def cancel():
+ try:
+  key=request.get_json(force=True)["race_key"];c=con();c.execute("UPDATE races SET status='cancelled' WHERE race_key=?",(key,));c.commit();c.close();return jsonify(ok=True)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/tick",methods=["GET","POST"])
 def tick():
@@ -173,18 +177,15 @@ def tick():
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/status")
 def status():
- key=request.args["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=?",(key,)).fetchone()
- ss=c.execute("SELECT * FROM snapshots WHERE race_key=? ORDER BY slot DESC",(key,)).fetchall()
- pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(key,)).fetchall()]
- rs=c.execute("SELECT * FROM results WHERE race_key=?",(key,)).fetchone();c.close()
- return jsonify(race=dict(r) if r else None,snaps={str(x["slot"]):json.loads(x["payload"]) for x in ss},predictions=pp,result=dict(rs) if rs else None)
+ key=request.args["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=?",(key,)).fetchone();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=?",(key,)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+ stages={}
+ if "15" in S:stages["15"]=point_signals(S["15"])
+ if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
+ if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+ pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(key,)).fetchall()];rs=c.execute("SELECT * FROM results WHERE race_key=?",(key,)).fetchone();c.close()
+ return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,result=dict(rs) if rs else None)
 @app.route("/api/learning")
 def learning():
- c=con()
- n=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"]
- p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)""").fetchall();c.close()
+ c=con();n=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"];p=c.execute("SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)").fetchall();c.close()
  total=len(p);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in p)
- bins={}
- for x in p:
-  b=f'{int(x["score"]//10)*10}-{int(x["score"]//10)*10+9}';bins.setdefault(b,[0,0]);bins[b][0]+=1;bins[b][1]+=x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"])
- return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),score_bins={k:{"n":v[0],"hits":v[1],"rate":v[1]/v[0]} for k,v in bins.items()})
+ return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None))
