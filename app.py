@@ -114,15 +114,20 @@ def predictions(key):
   score=round(100*(.40*level+.30*accel+.15*persist+.15*agree));out.append({**x,"d1":d1,"d2":d2,"agree":agree,"score":score})
  return sorted(out,key=lambda x:-x["score"])
 def save_predictions(key):
- A=predictions(key);C=[x for x in A if x["score"]>=65 and x["agree"]>=2/3 and x["d2"]>0][:3];c=con()
+ A=predictions(key);C=A[:3];c=con()
  c.execute("DELETE FROM predictions WHERE race_key=?",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT OR REPLACE INTO predictions VALUES(?,?,?,?,?,?,?,?,?,?)",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
+def signal_strength(x):
+ if x["score"]>=75 and x["agree"]>=2/3 and x["d2"]>0:return "STRONG"
+ if x["score"]>=55 and x["agree"]>=1/3:return "MEDIUM"
+ return "WEAK"
+
 def parse_result(s):
  rows=[]
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])];nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
-  if len(nums)>=2 and nums[0] in (1,2,3) and 1<=nums[1]<=18:rows.append((nums[0],nums[1]))
+  if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18:rows.append((nums[0],nums[2]))
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 def due():
  now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved'").fetchall()];c.close();ev=[]
@@ -163,8 +168,12 @@ def races():
   if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
   if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
   pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(r["race_key"],)).fetchall()]
-  rs=c.execute("SELECT * FROM results WHERE race_key=?",(r["race_key"],)).fetchone()
-  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"result":dict(rs) if rs else None})
+  for p in pp:p["strength"]=signal_strength(p)
+  rs=c.execute("SELECT * FROM results WHERE race_key=?",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
+  if result:
+   places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
+   for p in pp:p["finish"]=places.get(p["horse"],0)
+  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"result":result})
  c.close();return jsonify(races=out)
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
@@ -182,8 +191,25 @@ def status():
  if "15" in S:stages["15"]=point_signals(S["15"])
  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
- pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(key,)).fetchall()];rs=c.execute("SELECT * FROM results WHERE race_key=?",(key,)).fetchone();c.close()
- return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,result=dict(rs) if rs else None)
+ pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=? ORDER BY rank",(key,)).fetchall()]
+ for p in pp:p["strength"]=signal_strength(p)
+ rs=c.execute("SELECT * FROM results WHERE race_key=?",(key,)).fetchone();result=dict(rs) if rs else None
+ if result:
+  places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
+  for p in pp:p["finish"]=places.get(p["horse"],0)
+ c.close()
+ return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,result=result)
+@app.route("/api/repair-result",methods=["POST"])
+def repair_result():
+ try:
+  key=request.get_json(force=True)["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=?",(key,)).fetchone();c.close()
+  if not r:return jsonify(ok=False,error="race not found"),404
+  rs=parse_result(soup("RaceMarkTable",qfor(r)))
+  if not all(rs):return jsonify(ok=False,error="official result not available"),409
+  now=datetime.now(JST);c=con();c.execute("INSERT OR REPLACE INTO results VALUES(?,?,?,?,?,?)",(key,*rs,now.isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=?",(key,));c.commit();c.close()
+  return jsonify(ok=True,result=rs)
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
+
 @app.route("/api/learning")
 def learning():
  c=con();n=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"];p=c.execute("SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)").fetchall();c.close()
