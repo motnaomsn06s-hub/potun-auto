@@ -60,7 +60,7 @@ def win(s):
   o=None
   # Prefer the single-win-odds column after horse name.
   for z in cells[4:]:
-   m=re.search(r"(%s<!\d)(\d+(%s:\.\d+)%s)(%s!\d)",z.replace(",",""))
+   m=re.search(r"(?<!\d)(\d+(?:\.\d+)?)(?!\d)",z.replace(",",""))
    if m:
     v=float(m.group(1))
     if v>=1:
@@ -69,7 +69,7 @@ def win(s):
  return [[h,o] for h,o in out.items()]
 def combo(s,n):
  t=s.get_text(" ",strip=True).replace("→","-").replace("－","-")
- pat=r"(%s<!\d)(\d{1,2})\s*-\s*(\d{1,2})"+(r"\s*-\s*(\d{1,2})" if n==3 else "")+r"\s+([\d,.]+)"
+ pat=r"(?<!\d)(\d{1,2})\s*-\s*(\d{1,2})"+(r"\s*-\s*(\d{1,2})" if n==3 else "")+r"\s+([\d,.]+)"
  d={}
  for m in re.finditer(pat,t):
   g=m.groups();hs=tuple(map(int,g[:n]))
@@ -298,7 +298,9 @@ def home():return send_from_directory(".","index.html")
 @app.route("/api/reserve",methods=["POST"])
 def reserve():
  try:
-  x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"]);c=con()
+  x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"])
+  if (st-datetime.now(JST)).total_seconds()<16*60:return jsonify(ok=False,error="15・10・5分前の3時点取得に必要なため、発走16分前までに予約してください"),409
+  c=con()
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
   ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
   c.commit();c.close();return jsonify(ok=True,race_key=key)
