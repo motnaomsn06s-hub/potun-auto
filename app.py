@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.4)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.5)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -42,7 +42,7 @@ def init():
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
  c.commit();c.close()
- # PostgreSQL migration. Version 4 adds direct single-win odds movement features.
+ # PostgreSQL migration. Version 5 keeps direct money-flow features and recalibrates candidate gating.
  c=con()
  for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),
                  ("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION")):
@@ -50,10 +50,10 @@ def init():
    c.execute(f"ALTER TABLE learning_samples ADD COLUMN {col} {typ}");c.commit()
   except Exception:c.rollback()
  c.close()
- c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v4_money_flow'").fetchone()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v5_adaptive_gate'").fetchone()
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
-  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v4_money_flow','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v5_adaptive_gate','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -172,7 +172,7 @@ def analyse(W,Q,E,T):
   out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,
               "base":(q+e+t)/3,"reliability":tail_reliability(pop[h],od[h])})
  return out
-DATA_VERSION=4
+DATA_VERSION=5
 
 
 def take(r):
@@ -224,17 +224,40 @@ def predictions(key):
   x["rank_score"]=(lp if lp is not None else x["heuristic"]/100.0)
   out.append(x)
  return sorted(out,key=lambda x:-x["rank_score"])
+def adaptive_candidates(A):
+ if not A:return [],None
+ scores=[float(x.get("score") or 0) for x in A]
+ m=med(scores);mad=med([abs(v-m) for v in scores])
+ # Absolute floor prevents noise; race-relative cutoff prevents the v9.4 scale
+ # from suppressing every race simply because all heuristic scores are compressed.
+ relative=m+(0.75*1.4826*mad if mad>1e-9 else 0.0)
+ cutoff=max(28.0,min(48.0,relative))
+ C=[]
+ for x in A:
+  sc=float(x.get("score") or 0);wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0)
+  d2=float(x.get("d2") or 0);agree=float(x.get("agree") or 0);persist=float(x.get("persist") or 0)
+  # Need at least one direct money-flow/anomaly acceleration signal and one corroborating signal.
+  movement=(wm>=10 or flow>=8 or d2>0.08)
+  corroborated=(agree>=1/3 or persist>=0.50)
+  if sc>=cutoff and movement and corroborated:C.append(x)
+ # Borderline fallback: allow one WATCH candidate only when direct win-odds flow is genuinely visible.
+ if not C and A:
+  x=A[0];sc=float(x.get("score") or 0);wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0)
+  agree=float(x.get("agree") or 0);persist=float(x.get("persist") or 0)
+  if sc>=25 and (wm>=18 or flow>=12) and (agree>=1/3 or persist>=0.50):C=[x]
+ return C[:3],round(cutoff,1)
+
 def save_predictions(key):
- A=predictions(key)
- C=[x for x in A if x["score"]>=55 and x["agree"]>=1/3 and (x.get("win_move_score",0)>=15 or x.get("d2",0)>0.15)][:3]
+ A=predictions(key);C,_=adaptive_candidates(A)
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
 def signal_strength(x):
  rel=tail_reliability(x.get("pop",99),x.get("odds",999))
- wm=float(x.get("win_move_score") or 0)
- if x["score"]>=78 and x.get("agree",0)>=2/3 and (wm>=35 or x.get("d2",0)>0.20) and rel>=.80:return "STRONG"
- if x["score"]>=55 and x.get("agree",0)>=1/3 and (wm>=15 or x.get("d2",0)>0):return "MEDIUM"
+ wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0);d2=float(x.get("d2") or 0)
+ if x["score"]>=68 and x.get("agree",0)>=2/3 and (wm>=30 or d2>0.20) and rel>=.80:return "STRONG"
+ if x["score"]>=45 and x.get("agree",0)>=1/3 and (wm>=12 or flow>=8 or d2>0.08):return "MEDIUM"
+ if x["score"]>=25 and (wm>=10 or flow>=8 or d2>0.05):return "WATCH"
  return "WEAK"
 
 FEATURES=("base15","base10","base5","d1","d2","agree","persist","win_flow1","win_flow2","win_move","log_odds","pop_scaled")
@@ -331,9 +354,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=4 ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=5 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=4 LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=5 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -487,8 +510,8 @@ def odds_check():
 @app.route("/api/learning")
 def learning():
  c=con()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=4").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=4").fetchone()["n"]
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=5").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=5").fetchone()["n"]
  n=lraces
  p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
               WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=4)""").fetchall()
