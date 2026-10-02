@@ -35,10 +35,23 @@ def init():
    weights TEXT,means TEXT,stds TEXT,
    heuristic_val DOUBLE PRECISION,learned_val DOUBLE PRECISION,updated_at TEXT
  );
+ CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT);
  """
  for stmt in schema.split(";"):
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
+ c.commit();c.close()
+ # PostgreSQL migration: old rows default to parser v1 and are excluded from v2 training.
+ c=con()
+ try:
+  c.execute("ALTER TABLE learning_samples ADD COLUMN parser_version INTEGER DEFAULT 1")
+  c.commit()
+ except Exception:c.rollback()
+ c.close()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='win_parser_v2'").fetchone()
+ if not done:
+  c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
+  c.execute("INSERT INTO app_meta(k,v) VALUES('win_parser_v2','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -46,27 +59,28 @@ def soup(path,q):
  r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status();r.encoding=r.apparent_encoding or r.encoding
  return BeautifulSoup(r.text,"html.parser")
 def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
+def _num(text):
+ m=re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*",(text or "").replace(",",""))
+ return float(m.group(1)) if m else None
+
 def win(s):
- # NAR OddsTanFuku table starts with: 人気 / 馬番 / 印 / 馬名 / 単勝オッズ / 複勝オッズ.
- # The old parser incorrectly treated the first integer (人気) as 馬番.
+ # NAR default 馬番順: 枠 / 馬番 / 馬名 / 単勝 / 複勝...
+ # NAR 人気順:       人気 / 枠 / 馬番 / 馬名 / 単勝 / 複勝...
+ # Explicitly read only the 単勝 cell. Never scan 複勝 cells.
  out={}
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
-  if len(cells)<5:continue
-  if not re.fullmatch(r"\d{1,2}",cells[0] or ""):continue
-  if not re.fullmatch(r"\d{1,2}",cells[1] or ""):continue
-  h=int(cells[1])
-  if not 1<=h<=18:continue
-  o=None
-  # Prefer the single-win-odds column after horse name.
-  for z in cells[4:]:
-   m=re.search(r"(?<!\d)(\d+(?:\.\d+)?)(?!\d)",z.replace(",",""))
-   if m:
-    v=float(m.group(1))
-    if v>=1:
-     o=v;break
-  if o is not None:out[h]=o
- return [[h,o] for h,o in out.items()]
+  if len(cells)<4:continue
+  isint=lambda x: bool(re.fullmatch(r"\d{1,2}",x or ""))
+  h=o=None
+  if len(cells)>=5 and isint(cells[0]) and isint(cells[1]) and isint(cells[2]):
+   cand=int(cells[2]);price=_num(cells[4])
+   if 1<=cand<=18 and price is not None and price>=1:h,o=cand,price
+  elif isint(cells[0]) and isint(cells[1]):
+   cand=int(cells[1]);price=_num(cells[3])
+   if 1<=cand<=18 and price is not None and price>=1:h,o=cand,price
+  if h is not None:out[h]=o
+ return [[h,out[h]] for h in sorted(out)]
 def combo(s,n):
  t=s.get_text(" ",strip=True).replace("→","-").replace("－","-")
  pat=r"(?<!\d)(\d{1,2})\s*-\s*(\d{1,2})"+(r"\s*-\s*(\d{1,2})" if n==3 else "")+r"\s+([\d,.]+)"
@@ -108,11 +122,18 @@ def analyse(W,Q,E,T):
     if h in B:B[h][k].append(z)
  market(Q,"Q");market(E,"E");market(T,"T")
  return [{"horse":h,"odds":od[h],"pop":pop[h],"Q":agg(b["Q"]),"E":agg(b["E"]),"T":agg(b["T"]),"base":(agg(b["Q"])+agg(b["E"])+agg(b["T"]))/3} for h,b in B.items()]
+PARSER_VERSION=2
+
 def take(r):
  q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
  cnt={"win":len(W),"Q":len(Q),"E":len(E),"T":len(T)}
  if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全 "+str(cnt))
- return {"rows":analyse(W,Q,E,T),"counts":cnt,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+ market_sum=sum(1.0/o for _,o in W if o>0)
+ if not 0.55<=market_sum<=2.20:raise RuntimeError(f"単勝オッズ検証NG market_sum={market_sum:.3f} counts={cnt}")
+ return {"rows":analyse(W,Q,E,T),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":PARSER_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+
+def valid_payload(p):
+ return isinstance(p,dict) and int(p.get("parser_version") or 0)>=PARSER_VERSION
 
 def point_signals(payload,prev=None):
  rows=payload.get("rows",[]);pm={str(x["horse"]):x for x in (prev or {}).get("rows",[])}
@@ -158,6 +179,7 @@ def _sigmoid(z):
 def final_features(key):
  c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();c.close()
  S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+ S={k:v for k,v in S.items() if valid_payload(v)}
  if not all(k in S for k in ("15","10","5")):return []
  def mp(k):return {str(x["horse"]):x for x in S[k].get("rows",[])}
  a,b,z=mp("15"),mp("10"),mp("5");out=[]
@@ -180,11 +202,11 @@ def store_learning_samples(key,rs):
  top=set(rs);now=datetime.now(JST).isoformat();c=con()
  for x in rows:
   c.execute("""INSERT INTO learning_samples
-   (race_key,horse,label,base15,base10,base5,d1,d2,agree,persist,odds,pop,heuristic,created_at)
-   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at""",
+   (race_key,horse,label,base15,base10,base5,d1,d2,agree,persist,odds,pop,heuristic,created_at,parser_version)
+   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version""",
    (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],
-    x["d1"],x["d2"],x["agree"],x["persist"],x["odds"],x["pop"],x["heuristic"],now))
+    x["d1"],x["d2"],x["agree"],x["persist"],x["odds"],x["pop"],x["heuristic"],now,PARSER_VERSION))
  c.commit();c.close();return len(rows)
 
 def _vec(r):
@@ -228,9 +250,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=2 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=2 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -310,11 +332,12 @@ def races():
  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' ORDER BY start_iso DESC LIMIT 50").fetchall()];out=[]
  for r in rr:
   ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(r["race_key"],)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+  S={k:v for k,v in S.items() if valid_payload(v)}
   stages={}
   if "15" in S:stages["15"]=point_signals(S["15"])
   if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
   if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
-  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(r["race_key"],)).fetchall()]
+  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(r["race_key"],)).fetchall()] if all(k in S for k in ("15","10","5")) else []
   for p in pp:p["strength"]=signal_strength(p)
   rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
   if result:
@@ -334,11 +357,12 @@ def tick():
 @app.route("/api/status")
 def status():
  key=request.args["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
+ S={k:v for k,v in S.items() if valid_payload(v)}
  stages={}
  if "15" in S:stages["15"]=point_signals(S["15"])
  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
- pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()]
+ pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()] if all(k in S for k in ("15","10","5")) else []
  for p in pp:p["strength"]=signal_strength(p)
  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();result=dict(rs) if rs else None
  if result:
@@ -358,13 +382,22 @@ def repair_result():
   return jsonify(ok=True,result=rs,training=train)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 
+@app.route("/api/odds-check")
+def odds_check():
+ try:
+  q={"k_babaCode":request.args["baba"],"k_raceDate":request.args["date"].replace("-","/"),"k_raceNo":int(request.args["race"])}
+  W=win(soup("OddsTanFuku",q));market_sum=sum(1.0/o for _,o in W if o>0)
+  return jsonify(ok=bool(W) and 0.55<=market_sum<=2.20,count=len(W),market_sum=round(market_sum,4),win_odds=W)
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
+
 @app.route("/api/learning")
 def learning():
  c=con()
- n=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"]
- p=c.execute("SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)").fetchall()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples").fetchone()["n"]
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=2").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=2").fetchone()["n"]
+ n=lraces
+ p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
+              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=2)""").fetchall()
  s=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  total=len(p);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in p)
  return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),
