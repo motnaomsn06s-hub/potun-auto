@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.3)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.4)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -26,6 +26,7 @@ def init():
  CREATE TABLE IF NOT EXISTS learning_samples(
    race_key TEXT,horse INTEGER,label INTEGER,
    base15 DOUBLE PRECISION,base10 DOUBLE PRECISION,base5 DOUBLE PRECISION,d1 DOUBLE PRECISION,d2 DOUBLE PRECISION,agree DOUBLE PRECISION,persist DOUBLE PRECISION,
+   odds15 DOUBLE PRECISION,odds10 DOUBLE PRECISION,odds5 DOUBLE PRECISION,win_flow1 DOUBLE PRECISION,win_flow2 DOUBLE PRECISION,win_move DOUBLE PRECISION,
    odds DOUBLE PRECISION,pop INTEGER,heuristic DOUBLE PRECISION,created_at TEXT,
    PRIMARY KEY(race_key,horse)
  );
@@ -41,17 +42,18 @@ def init():
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
  c.commit();c.close()
- # PostgreSQL migration: old rows default to parser v1. v3 excludes older scoring snapshots/training.
+ # PostgreSQL migration. Version 4 adds direct single-win odds movement features.
  c=con()
- try:
-  c.execute("ALTER TABLE learning_samples ADD COLUMN parser_version INTEGER DEFAULT 1")
-  c.commit()
- except Exception:c.rollback()
+ for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),
+                 ("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION")):
+  try:
+   c.execute(f"ALTER TABLE learning_samples ADD COLUMN {col} {typ}");c.commit()
+  except Exception:c.rollback()
  c.close()
- c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v3_tail_neutral'").fetchone()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v4_money_flow'").fetchone()
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
-  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v3_tail_neutral','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v4_money_flow','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -170,7 +172,7 @@ def analyse(W,Q,E,T):
   out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,
               "base":(q+e+t)/3,"reliability":tail_reliability(pop[h],od[h])})
  return out
-DATA_VERSION=3
+DATA_VERSION=4
 
 
 def take(r):
@@ -184,18 +186,32 @@ def take(r):
 def valid_payload(p):
  return isinstance(p,dict) and int(p.get("parser_version") or 0)>=DATA_VERSION
 
+def _win_flow(prev_odds,cur_odds):
+ if not prev_odds or not cur_odds or prev_odds<=0 or cur_odds<=0:return 0.0
+ return math.log(prev_odds/cur_odds)  # positive = odds shortened / money entered
+
 def point_signals(payload,prev=None):
  rows=payload.get("rows",[]);pm={str(x["horse"]):x for x in (prev or {}).get("rows",[])}
- raw=[]
+ raw=[];flows=[]
  for x in rows:
+  p=pm.get(str(x["horse"])) if pm else None
+  flows.append(_win_flow(p.get("odds") if p else None,x.get("odds")) if p else 0.0)
+ zflows=rz(flows) if prev else [0.0]*len(rows)
+ for x,wz,wf in zip(rows,zflows,flows):
   agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
   level=math.tanh(max(0,x["base"])/2)
-  delta=x["base"]-pm.get(str(x["horse"]),x)["base"] if pm else 0
-  move=math.tanh(max(0,delta)/1.5) if pm else 0
-  raw_score=100*((.72 if not pm else .52)*level+(.0 if not pm else .28)*move+.20*agree)
+  p=pm.get(str(x["horse"])) if pm else None
+  delta=x["base"]-(p["base"] if p else x["base"])
+  anomaly_move=math.tanh(max(0,delta)/1.5) if p else 0
+  win_abs=math.tanh(max(0,wf)/0.30) if p else 0
+  win_rel=math.tanh(max(0,wz)/2.0) if p else 0
+  win_signal=.45*win_abs+.55*win_rel
+  raw_score=100*((.70 if not p else .42)*level+(.0 if not p else .10)*anomaly_move+(.0 if not p else .38)*win_signal+.10*agree)
   rel=float(x.get("reliability",tail_reliability(x["pop"],x["odds"])))
   score=round(raw_score*rel)
-  raw.append({**x,"delta":delta,"agree":agree,"reliability":rel,"score":max(0,min(100,score))})
+  pct=((p["odds"]/x["odds"])-1.0)*100 if p and x.get("odds") else None
+  raw.append({**x,"delta":delta,"agree":agree,"reliability":rel,"score":max(0,min(100,score)),
+              "prev_odds":p.get("odds") if p else None,"win_flow":wf,"win_pct":pct,"win_flow_z":wz})
  return sorted(raw,key=lambda x:-x["score"])[:3]
 
 def predictions(key):
@@ -209,18 +225,19 @@ def predictions(key):
   out.append(x)
  return sorted(out,key=lambda x:-x["rank_score"])
 def save_predictions(key):
- A=predictions(key);C=A[:3];c=con()
- c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
+ A=predictions(key)
+ C=[x for x in A if x["score"]>=55 and x["agree"]>=1/3 and (x.get("win_move_score",0)>=15 or x.get("d2",0)>0.15)][:3]
+ c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
 def signal_strength(x):
  rel=tail_reliability(x.get("pop",99),x.get("odds",999))
- if x["score"]>=80 and x["agree"]>=2/3 and x["d2"]>0 and rel>=.80:return "STRONG"
- if x["score"]>=58 and x["agree"]>=1/3:return "MEDIUM"
+ wm=float(x.get("win_move_score") or 0)
+ if x["score"]>=78 and x.get("agree",0)>=2/3 and (wm>=35 or x.get("d2",0)>0.20) and rel>=.80:return "STRONG"
+ if x["score"]>=55 and x.get("agree",0)>=1/3 and (wm>=15 or x.get("d2",0)>0):return "MEDIUM"
  return "WEAK"
 
-
-FEATURES=("base15","base10","base5","d1","d2","agree","persist","log_odds","pop_scaled")
+FEATURES=("base15","base10","base5","d1","d2","agree","persist","win_flow1","win_flow2","win_move","log_odds","pop_scaled")
 MIN_TRAIN_RACES=30
 MIN_TRAIN_SAMPLES=200
 
@@ -230,24 +247,34 @@ def _sigmoid(z):
 
 def final_features(key):
  c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();c.close()
- S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
- S={k:v for k,v in S.items() if valid_payload(v)}
+ S={str(x["slot"]):json.loads(x["payload"]) for x in ss};S={k:v for k,v in S.items() if valid_payload(v)}
  if not all(k in S for k in ("15","10","5")):return []
  def mp(k):return {str(x["horse"]):x for x in S[k].get("rows",[])}
- a,b,z=mp("15"),mp("10"),mp("5");out=[]
+ a,b,z=mp("15"),mp("10"),mp("5");raw=[]
  for h,x in z.items():
   if h not in a or h not in b:continue
   d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
   persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
   agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
-  level=math.tanh(max(0,x["base"])/2);accel=math.tanh(max(0,d2)/1.5)
-  rel=float(x.get("reliability",tail_reliability(x["pop"],x["odds"])))
-  rawh=100*(.40*level+.30*accel+.15*persist+.15*agree)
+  o15=float(a[h]["odds"]);o10=float(b[h]["odds"]);o5=float(x["odds"])
+  wf1=_win_flow(o15,o10);wf2=_win_flow(o10,o5);wm=.30*wf1+.70*wf2
+  raw.append({**x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":x["base"],
+   "d1":d1,"d2":d2,"agree":agree,"persist":persist,"odds15":o15,"odds10":o10,"odds5":o5,
+   "win_flow1":wf1,"win_flow2":wf2,"win_move":wm})
+ if not raw:return []
+ wz=rz([r["win_move"] for r in raw]);out=[]
+ for r,wzr in zip(raw,wz):
+  level=math.tanh(max(0,r["base5"])/2);accel=math.tanh(max(0,r["d2"])/1.5)
+  win_abs=math.tanh(max(0,r["win_move"])/0.30);win_rel=math.tanh(max(0,wzr)/2.0)
+  win_signal=.45*win_abs+.55*win_rel
+  win_persist=((1 if r["win_flow1"]>0 else 0)+(1 if r["win_flow2"]>0 else 0))/2
+  persist2=.60*r["persist"]+.40*win_persist
+  rel=float(r.get("reliability",tail_reliability(r["pop"],r["odds"])))
+  rawh=100*(.30*level+.20*accel+.30*win_signal+.10*r["agree"]+.10*persist2)
   heuristic=max(0,min(100,round(rawh*rel)))
-  out.append({
-   **x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":x["base"],
-   "d1":d1,"d2":d2,"agree":agree,"persist":persist,"reliability":rel,"heuristic":heuristic
-  })
+  flow_pct=((r["odds15"]/r["odds5"])-1.0)*100 if r["odds5"]>0 else 0.0
+  out.append({**r,"persist":persist2,"reliability":rel,"heuristic":heuristic,"win_move_z":wzr,
+              "win_move_score":round(100*win_signal),"win_flow_pct":flow_pct})
  return out
 
 def store_learning_samples(key,rs):
@@ -256,17 +283,17 @@ def store_learning_samples(key,rs):
  top=set(rs);now=datetime.now(JST).isoformat();c=con()
  for x in rows:
   c.execute("""INSERT INTO learning_samples
-   (race_key,horse,label,base15,base10,base5,d1,d2,agree,persist,odds,pop,heuristic,created_at,parser_version)
-   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version""",
-   (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],
-    x["d1"],x["d2"],x["agree"],x["persist"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION))
+   (race_key,horse,label,base15,base10,base5,d1,d2,agree,persist,odds15,odds10,odds5,win_flow1,win_flow2,win_move,odds,pop,heuristic,created_at,parser_version)
+   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds15=EXCLUDED.odds15,odds10=EXCLUDED.odds10,odds5=EXCLUDED.odds5,win_flow1=EXCLUDED.win_flow1,win_flow2=EXCLUDED.win_flow2,win_move=EXCLUDED.win_move,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version""",
+   (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],x["d1"],x["d2"],x["agree"],x["persist"],
+    x["odds15"],x["odds10"],x["odds5"],x["win_flow1"],x["win_flow2"],x["win_move"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION))
  c.commit();c.close();return len(rows)
 
 def _vec(r):
  return [float(r["base15"]),float(r["base10"]),float(r["base5"]),float(r["d1"]),float(r["d2"]),
-         float(r["agree"]),float(r["persist"]),math.log(max(float(r["odds"]),1.0001)),
-         min(float(r["pop"]),18.0)/18.0]
+         float(r["agree"]),float(r["persist"]),float(r.get("win_flow1") or 0),float(r.get("win_flow2") or 0),float(r.get("win_move") or 0),
+         math.log(max(float(r["odds"]),1.0001)),min(float(r["pop"]),18.0)/18.0]
 
 def _fit(train):
  X=[_vec(r) for r in train];y=[int(r["label"]) for r in train];n=len(X);p=len(FEATURES)
@@ -304,9 +331,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=3 ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=4 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=3 LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=4 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -338,7 +365,8 @@ def model_score(x):
  if s.get("status")!="ACTIVE" or not s.get("weights"):return None
  try:
   r={"base15":x["base15"],"base10":x["base10"],"base5":x["base5"],"d1":x["d1"],"d2":x["d2"],
-     "agree":x["agree"],"persist":x["persist"],"odds":x["odds"],"pop":x["pop"]}
+     "agree":x["agree"],"persist":x["persist"],"win_flow1":x.get("win_flow1",0),"win_flow2":x.get("win_flow2",0),"win_move":x.get("win_move",0),
+     "odds":x["odds"],"pop":x["pop"]}
   return _prob(r,json.loads(s["weights"]),json.loads(s["means"]),json.loads(s["stds"]))
  except:return None
 
@@ -398,7 +426,10 @@ def races():
   if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
   if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
   pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(r["race_key"],)).fetchall()] if all(k in S for k in ("15","10","5")) else []
-  for p in pp:p["strength"]=signal_strength(p)
+  fm={x["horse"]:x for x in final_features(r["race_key"])} if all(k in S for k in ("15","10","5")) else {}
+  for p in pp:
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct")})
+   p["strength"]=signal_strength(p)
   rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
   if result:
    places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
@@ -423,7 +454,10 @@ def status():
  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()] if all(k in S for k in ("15","10","5")) else []
- for p in pp:p["strength"]=signal_strength(p)
+ fm={x["horse"]:x for x in final_features(key)} if all(k in S for k in ("15","10","5")) else {}
+ for p in pp:
+  if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct")})
+  p["strength"]=signal_strength(p)
  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();result=dict(rs) if rs else None
  if result:
   places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
@@ -453,14 +487,17 @@ def odds_check():
 @app.route("/api/learning")
 def learning():
  c=con()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=3").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=3").fetchone()["n"]
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=4").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=4").fetchone()["n"]
  n=lraces
  p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
-              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=2)""").fetchall()
+              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=4)""").fetchall()
  s=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  total=len(p);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in p)
- return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),
+ by={}
+ for x in p:by.setdefault(x["race_key"],[]).append(x)
+ signal_races=len(by);race_hit=sum(any(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in rr) for rr in by.values())
+ return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),signal_races=signal_races,race_hit_rate=(race_hit/signal_races if signal_races else None),
   learning_races=lraces,learning_samples=samples,model_status=s["status"],model_version=s["version"],
   min_train_races=MIN_TRAIN_RACES,min_train_samples=MIN_TRAIN_SAMPLES,
   heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"])
