@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.8)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.3)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -41,17 +41,17 @@ def init():
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
  c.commit();c.close()
- # PostgreSQL migration: old rows default to parser v1 and are excluded from v2 training.
+ # PostgreSQL migration: old rows default to parser v1. v3 excludes older scoring snapshots/training.
  c=con()
  try:
   c.execute("ALTER TABLE learning_samples ADD COLUMN parser_version INTEGER DEFAULT 1")
   c.commit()
  except Exception:c.rollback()
  c.close()
- c=con();done=c.execute("SELECT v FROM app_meta WHERE k='win_parser_v2'").fetchone()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v3_tail_neutral'").fetchone()
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
-  c.execute("INSERT INTO app_meta(k,v) VALUES('win_parser_v2','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v3_tail_neutral','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -96,8 +96,48 @@ def med(a):
 def rz(a):
  if not a:return []
  m=med(a);mad=med([abs(x-m) for x in a]);return [0]*len(a) if mad<1e-9 else [(x-m)/(1.4826*mad) for x in a]
+
+def band_rz(values,model_probs):
+ # Compare a combination only with combinations of similar theoretical probability.
+ # This removes the systematic tendency for very-low-probability combinations to look
+ # "overbet" merely because real markets are flatter than a pure win-odds model.
+ n=len(values)
+ if not n:return []
+ global_z=rz(values)
+ order=sorted(range(n),key=lambda i:model_probs[i])
+ bins=min(8,max(3,int(math.sqrt(n))))
+ out=[0.0]*n
+ for b in range(bins):
+  ids=order[b*n//bins:(b+1)*n//bins]
+  if not ids:continue
+  vals=[values[i] for i in ids];m=med(vals);mad=med([abs(x-m) for x in vals])
+  for i in ids:
+   z=global_z[i] if mad<1e-7 else (values[i]-m)/(1.4826*mad)
+   out[i]=max(-4.0,min(4.0,z))
+ return out
+
 def agg(a):
- a=sorted([x for x in a if x>0],reverse=True);return .5*(a[0] if a else 0)+.3*(a[1] if len(a)>1 else 0)+.2*(a[2] if len(a)>2 else 0)
+ # Do not keep only the three positive outliers. Use the whole distribution,
+ # including negative evidence, and reward broad/consistent distortion instead.
+ if not a:return 0.0
+ v=sorted(max(-4.0,min(4.0,float(x))) for x in a)
+ n=len(v);trim=int(n*.10)
+ core=v[trim:n-trim] if n-2*trim>=3 else v
+ center=sum(core)/len(core)
+ q=max(1,int(math.ceil(n*.25)))
+ tails=(sum(v[:q])/q + sum(v[-q:])/q)/2
+ pos=sum(x>.5 for x in v)/n;neg=sum(x<-.5 for x in v)/n
+ breadth=pos-neg
+ return .65*center+.20*tails+.15*breadth
+
+def tail_reliability(pop,odds):
+ # Soft confidence adjustment only; never hard-excludes a longshot.
+ # Extreme longshots need stronger anomaly evidence before receiving the same
+ # candidate score as a horse with a materially higher baseline chance.
+ p=max(0,int(pop)-8)*.06
+ o=max(0.0,math.log(max(float(odds),1.0)/40.0))*.10
+ return max(.70,min(1.0,1.0-p-o))
+
 def analyse(W,Q,E,T):
  inv={h:1/o for h,o in W};sm=sum(inv.values());P={h:v/sm for h,v in inv.items()};od=dict(W)
  pop={h:i+1 for i,(h,o) in enumerate(sorted(W,key=lambda x:(x[1],x[0])))}
@@ -116,13 +156,22 @@ def analyse(W,Q,E,T):
    except:continue
    if pr>0 and o>0:mod.append(pr);act.append(1/o);hh.append(hs)
   if not hh:return
-  ms=sum(mod);aa=sum(act);D=[math.log(max(a/aa,1e-15)/max(m/ms,1e-15)) for a,m in zip(act,mod)]
-  for z,hs in zip(rz(D),hh):
+  ms=sum(mod);aa=sum(act)
+  modelp=[m/ms for m in mod];actualp=[a/aa for a in act]
+  D=[math.log(max(ap,1e-15)/max(mp,1e-15)) for ap,mp in zip(actualp,modelp)]
+  Z=band_rz(D,modelp)
+  for z,hs in zip(Z,hh):
    for h in hs:
     if h in B:B[h][k].append(z)
  market(Q,"Q");market(E,"E");market(T,"T")
- return [{"horse":h,"odds":od[h],"pop":pop[h],"Q":agg(b["Q"]),"E":agg(b["E"]),"T":agg(b["T"]),"base":(agg(b["Q"])+agg(b["E"])+agg(b["T"]))/3} for h,b in B.items()]
-PARSER_VERSION=2
+ out=[]
+ for h,b in B.items():
+  q,e,t=agg(b["Q"]),agg(b["E"]),agg(b["T"])
+  out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,
+              "base":(q+e+t)/3,"reliability":tail_reliability(pop[h],od[h])})
+ return out
+DATA_VERSION=3
+
 
 def take(r):
  q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
@@ -130,10 +179,10 @@ def take(r):
  if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全 "+str(cnt))
  market_sum=sum(1.0/o for _,o in W if o>0)
  if not 0.55<=market_sum<=2.20:raise RuntimeError(f"単勝オッズ検証NG market_sum={market_sum:.3f} counts={cnt}")
- return {"rows":analyse(W,Q,E,T),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":PARSER_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+ return {"rows":analyse(W,Q,E,T),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
 
 def valid_payload(p):
- return isinstance(p,dict) and int(p.get("parser_version") or 0)>=PARSER_VERSION
+ return isinstance(p,dict) and int(p.get("parser_version") or 0)>=DATA_VERSION
 
 def point_signals(payload,prev=None):
  rows=payload.get("rows",[]);pm={str(x["horse"]):x for x in (prev or {}).get("rows",[])}
@@ -143,8 +192,10 @@ def point_signals(payload,prev=None):
   level=math.tanh(max(0,x["base"])/2)
   delta=x["base"]-pm.get(str(x["horse"]),x)["base"] if pm else 0
   move=math.tanh(max(0,delta)/1.5) if pm else 0
-  score=round(100*((.72 if not pm else .52)*level+(.0 if not pm else .28)*move+.20*agree))
-  raw.append({**x,"delta":delta,"agree":agree,"score":max(0,min(100,score))})
+  raw_score=100*((.72 if not pm else .52)*level+(.0 if not pm else .28)*move+.20*agree)
+  rel=float(x.get("reliability",tail_reliability(x["pop"],x["odds"])))
+  score=round(raw_score*rel)
+  raw.append({**x,"delta":delta,"agree":agree,"reliability":rel,"score":max(0,min(100,score))})
  return sorted(raw,key=lambda x:-x["score"])[:3]
 
 def predictions(key):
@@ -163,8 +214,9 @@ def save_predictions(key):
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
 def signal_strength(x):
- if x["score"]>=75 and x["agree"]>=2/3 and x["d2"]>0:return "STRONG"
- if x["score"]>=55 and x["agree"]>=1/3:return "MEDIUM"
+ rel=tail_reliability(x.get("pop",99),x.get("odds",999))
+ if x["score"]>=80 and x["agree"]>=2/3 and x["d2"]>0 and rel>=.80:return "STRONG"
+ if x["score"]>=58 and x["agree"]>=1/3:return "MEDIUM"
  return "WEAK"
 
 
@@ -189,10 +241,12 @@ def final_features(key):
   persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
   agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
   level=math.tanh(max(0,x["base"])/2);accel=math.tanh(max(0,d2)/1.5)
-  heuristic=max(0,min(100,round(100*(.40*level+.30*accel+.15*persist+.15*agree))))
+  rel=float(x.get("reliability",tail_reliability(x["pop"],x["odds"])))
+  rawh=100*(.40*level+.30*accel+.15*persist+.15*agree)
+  heuristic=max(0,min(100,round(rawh*rel)))
   out.append({
    **x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":x["base"],
-   "d1":d1,"d2":d2,"agree":agree,"persist":persist,"heuristic":heuristic
+   "d1":d1,"d2":d2,"agree":agree,"persist":persist,"reliability":rel,"heuristic":heuristic
   })
  return out
 
@@ -206,7 +260,7 @@ def store_learning_samples(key,rs):
    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version""",
    (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],
-    x["d1"],x["d2"],x["agree"],x["persist"],x["odds"],x["pop"],x["heuristic"],now,PARSER_VERSION))
+    x["d1"],x["d2"],x["agree"],x["persist"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION))
  c.commit();c.close();return len(rows)
 
 def _vec(r):
@@ -250,9 +304,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=2 ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=3 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=2 LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=3 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -300,10 +354,16 @@ def due():
  for r in rr:
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
   for slot in (15,10,5):
-   c=con();ex=c.execute("SELECT 1 FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
+   c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
+   ex=False
+   if oldrow:
+    try:ex=valid_payload(json.loads(oldrow["payload"]))
+    except:ex=False
    if not ex and slot-2<=mins<=slot+1:
     try:
-     data=take(r);c=con();c.execute("INSERT INTO snapshots VALUES(%s,%s,%s,%s) ON CONFLICT(race_key,slot) DO NOTHING",(r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
+     data=take(r);c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
+      ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
+      (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
      if slot==5:save_predictions(r["race_key"])
     except Exception as e:ev.append("ERR snapshot "+str(e))
   if mins < -3 and not r["result_checked"]:
@@ -393,8 +453,8 @@ def odds_check():
 @app.route("/api/learning")
 def learning():
  c=con()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=2").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=2").fetchone()["n"]
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=3").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=3").fetchone()["n"]
  n=lraces
  p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
               WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=2)""").fetchall()
