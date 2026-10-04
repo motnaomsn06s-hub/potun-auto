@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/11.1)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/11.2)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -758,10 +758,10 @@ def races():
   for r in rr:
    try:
     ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(r["race_key"],)).fetchall()
-    S={}
+    RAW={};S={}
     for x in ss:
      try:
-      p=json.loads(x["payload"]);
+      p=json.loads(x["payload"]);RAW[str(x["slot"])]=p
       if valid_payload(p):S[str(x["slot"])]=p
      except Exception:
       pass
@@ -772,7 +772,7 @@ def races():
     if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
     if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
     rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
-    out.append({**r,"slots":[int(x) for x in S],"stages":stages,"result":result})
+    out.append({**r,"slots":[int(x) for x in RAW],"current_slots":[int(x) for x in S],"legacy":bool(set(RAW)-set(S)),"stages":stages,"result":result})
    except Exception as e:
     # One malformed historical race must never take down the entire queue.
     out.append({**r,"slots":[],"stages":{},"result":None,"queue_warning":str(e)[:160]})
@@ -798,10 +798,10 @@ def status():
   ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall()
   pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()]
   rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();c.close()
-  S={}
+  RAW={};S={}
   for x in ss:
    try:
-    p=json.loads(x["payload"]);
+    p=json.loads(x["payload"]);RAW[str(x["slot"])]=p
     if valid_payload(p):S[str(x["slot"])]=p
    except Exception:
     pass
@@ -834,7 +834,29 @@ def status():
    elif len(rankings)>2:selected.append(next((x for x in rankings if x not in selected),rankings[2]))
    for i,x in enumerate(selected[:3],1):
     y=dict(x);y["rank"]=i;y["strength"]=scope_label(y);display_predictions.append(y)
-  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=display_predictions,rankings=rankings,result=result,profile_ready=profile_ready)
+  # Historical compatibility: old parser payloads stay visible, but are never fed into Ver.11 DNA/learning.
+  profiles=load_profiles(key)
+  latest_key=next((k for k in ("3","4","5","10","15") if k in RAW),None)
+  latest=(RAW.get(latest_key) or {}) if latest_key else {}
+  latest_rows={int(x.get("horse")):x for x in latest.get("rows",[]) if x.get("horse") is not None}
+  legacy_predictions=[]
+  for oldp in pp:
+   h=int(oldp.get("horse") or 0);pr=profiles.get(h,{})
+   row=latest_rows.get(h,{})
+   legacy_predictions.append({"horse":h,"rank":oldp.get("rank"),"legacy_score":oldp.get("score"),"pop":oldp.get("pop") or row.get("pop"),
+      "odds":oldp.get("odds") or row.get("odds"),"frame":pr.get("frame"),"name":pr.get("name") or f"{h}番",
+      "jockey":pr.get("jockey","") ,"style":pr.get("style","不明")})
+  legacy_market=[]
+  for h,row in latest_rows.items():
+   pr=profiles.get(h,{})
+   legacy_market.append({"horse":h,"pop":row.get("pop"),"odds":row.get("odds"),"base":row.get("base"),
+      "frame":pr.get("frame"),"name":pr.get("name") or f"{h}番","jockey":pr.get("jockey","")})
+  legacy_market.sort(key=lambda x:((x.get("pop") if x.get("pop") is not None else 99),x["horse"]))
+  legacy_active=bool(RAW) and not full
+  legacy={"active":legacy_active,"slots":sorted([int(k) for k in RAW]),"latest_slot":int(latest_key) if latest_key else None,
+          "predictions":legacy_predictions,"market_rows":legacy_market,
+          "note":"旧版保存データを表示中。Ver.11 ODDS DNAの再計算・学習には使用しません。"}
+  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,profile_ready=profile_ready,legacy=legacy)
  except Exception as e:
   try:c.close()
   except Exception:pass
