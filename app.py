@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.0)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.2)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -350,10 +350,11 @@ def point_signals(payload,prev=None):
               "prev_odds":p.get("odds") if p else None,"win_flow":wf,"win_pct":pct,"win_flow_z":wz})
  return sorted(raw,key=lambda x:-x["score"])[:3]
 
-def predictions(key):
+def predictions(key,model_state=None):
  A=final_features(key);out=[]
+ state=model_state if model_state is not None else get_model_state()
  for x in A:
-  lp=model_score(x)
+  lp=model_score(x,state)
   learned_market=(lp if lp is not None else x["market_score"]/100.0)
   rank_score=.55*learned_market+.45*(x["performance_score"]/100.0)
   x["learned_prob"]=lp;x["rank_score"]=rank_score;x["score"]=x["scope_score"]
@@ -516,8 +517,15 @@ def maybe_train():
   ("KEEP_HEURISTIC",len(uniq),len(rows),h,l,datetime.now(JST).isoformat()));c.commit();c.close()
  return {"status":"KEEP_HEURISTIC","version":oldv,"heuristic_val":h,"learned_val":l}
 
-def model_score(x):
- c=con();s=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
+def get_model_state():
+ try:
+  c=con();row=c.execute("SELECT * FROM model_state WHERE id=1").fetchone();c.close()
+  return dict(row) if row else {}
+ except Exception:
+  return {}
+
+def model_score(x,state=None):
+ s=state if state is not None else get_model_state()
  if s.get("status")!="ACTIVE" or not s.get("weights"):return None
  try:
   r={"base15":x["base15"],"base10":x["base10"],"base5":x["base5"],"d1":x["d1"],"d2":x["d2"],
@@ -580,26 +588,36 @@ def reserve():
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/races")
 def races():
- c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' ORDER BY start_iso DESC LIMIT 50").fetchall()];out=[]
- for r in rr:
-  ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(r["race_key"],)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
-  S={k:v for k,v in S.items() if valid_payload(v)}
-  stages={}
-  if "15" in S:stages["15"]=point_signals(S["15"])
-  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
-  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
-  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(r["race_key"],)).fetchall()] if all(k in S for k in ("15","10","5")) else []
-  fm={x["horse"]:x for x in final_features(r["race_key"])} if all(k in S for k in ("15","10","5")) else {}
-  for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
-   p["strength"]=signal_strength(p)
-  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
-  if result:
-   places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
-   for p in pp:p["finish"]=places.get(p["horse"],0)
-  rankings=predictions(r["race_key"]) if all(k in S for k in ("15","10","5")) else []
-  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"rankings":rankings,"result":result})
- c.close();return jsonify(races=out)
+ # Queue endpoint must stay lightweight. Full hybrid ranking is computed only
+ # when the user opens Detail (/api/status). This prevents one queue refresh
+ # from opening hundreds of Supabase connections across historical races.
+ try:
+  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' ORDER BY start_iso DESC LIMIT 50").fetchall()]
+  out=[]
+  for r in rr:
+   try:
+    ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(r["race_key"],)).fetchall()
+    S={}
+    for x in ss:
+     try:
+      p=json.loads(x["payload"]);
+      if valid_payload(p):S[str(x["slot"])]=p
+     except Exception:
+      pass
+    stages={}
+    if "15" in S:stages["15"]=point_signals(S["15"])
+    if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
+    if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+    rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
+    out.append({**r,"slots":[int(x) for x in S],"stages":stages,"result":result})
+   except Exception as e:
+    # One malformed historical race must never take down the entire queue.
+    out.append({**r,"slots":[],"stages":{},"result":None,"queue_warning":str(e)[:160]})
+  c.close();return jsonify(races=out)
+ except Exception as e:
+  try:c.close()
+  except Exception:pass
+  return jsonify(races=[],error=str(e)),200
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
  try:
@@ -611,24 +629,39 @@ def tick():
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/status")
 def status():
- key=request.args["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();S={str(x["slot"]):json.loads(x["payload"]) for x in ss}
- S={k:v for k,v in S.items() if valid_payload(v)}
- stages={}
- if "15" in S:stages["15"]=point_signals(S["15"])
- if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
- if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
- pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()] if all(k in S for k in ("15","10","5")) else []
- fm={x["horse"]:x for x in final_features(key)} if all(k in S for k in ("15","10","5")) else {}
- for p in pp:
-  if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
-  p["strength"]=signal_strength(p)
- rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();result=dict(rs) if rs else None
- if result:
-  places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
-  for p in pp:p["finish"]=places.get(p["horse"],0)
- c.close()
- rankings=predictions(key) if all(k in S for k in ("15","10","5")) else []
- return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,profiles=load_profiles(key),result=result)
+ try:
+  key=request.args["race_key"]
+  c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone()
+  ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall()
+  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()]
+  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();c.close()
+  S={}
+  for x in ss:
+   try:
+    p=json.loads(x["payload"]);
+    if valid_payload(p):S[str(x["slot"])]=p
+   except Exception:
+    pass
+  stages={}
+  if "15" in S:stages["15"]=point_signals(S["15"])
+  if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
+  if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+  full=all(k in S for k in ("15","10","5"))
+  fm={x["horse"]:x for x in final_features(key)} if full else {}
+  for p in pp:
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
+   p["strength"]=signal_strength(p)
+  result=dict(rs) if rs else None
+  if result:
+   places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
+   for p in pp:p["finish"]=places.get(p["horse"],0)
+  state=get_model_state() if full else {}
+  rankings=predictions(key,state) if full else []
+  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,profiles=load_profiles(key),result=result)
+ except Exception as e:
+  try:c.close()
+  except Exception:pass
+  return jsonify(ok=False,error=str(e)),500
 @app.route("/api/repair-result",methods=["POST"])
 def repair_result():
  try:
