@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsSignal/0.9.5)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.0)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -37,12 +37,16 @@ def init():
    heuristic_val DOUBLE PRECISION,learned_val DOUBLE PRECISION,updated_at TEXT
  );
  CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT);
+ CREATE TABLE IF NOT EXISTS profiles(
+   race_key TEXT,horse INTEGER,payload TEXT,fetched_at TEXT,
+   PRIMARY KEY(race_key,horse)
+ );
  """
  for stmt in schema.split(";"):
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
  c.commit();c.close()
- # PostgreSQL migration. Version 5 keeps direct money-flow features and recalibrates candidate gating.
+ # PostgreSQL migration. Version 10 adds official NAR performance profiles while preserving market learning.
  c=con()
  for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),
                  ("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION")):
@@ -50,10 +54,10 @@ def init():
    c.execute(f"ALTER TABLE learning_samples ADD COLUMN {col} {typ}");c.commit()
   except Exception:c.rollback()
  c.close()
- c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v5_adaptive_gate'").fetchone()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v10_scope_hybrid'").fetchone()
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
-  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v5_adaptive_gate','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v10_scope_hybrid','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -172,8 +176,140 @@ def analyse(W,Q,E,T):
   out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,
               "base":(q+e+t)/3,"reliability":tail_reliability(pop[h],od[h])})
  return out
-DATA_VERSION=5
+DATA_VERSION=6
 
+
+
+PROFILE_VERSION=1
+
+def _rec4(text,label):
+ m=re.search(label+r"\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",text)
+ return tuple(map(int,m.groups())) if m else (0,0,0,0)
+
+def _record_score(rec):
+ w,s,t,o=rec;starts=w+s+t+o
+ if starts<=0:return 50.0
+ raw=100.0*(w+.62*s+.38*t)/starts
+ # Shrink tiny samples toward neutral.
+ return max(0.0,min(100.0,(raw*starts+50.0*3)/(starts+3)))
+
+def _form_score(finishes):
+ if not finishes:return 50.0
+ weights=(.36,.25,.18,.13,.08);pts=[]
+ for i,f in enumerate(finishes[:5]):
+  # 1st=100, 3rd~67, 5th~45, 10th~15.
+  p=100.0*math.exp(-max(0,int(f)-1)/5.0)
+  pts.append((weights[i],p))
+ den=sum(w for w,_ in pts)
+ return max(0.0,min(100.0,sum(w*p for w,p in pts)/den if den else 50.0))
+
+def _style_from_corners(corners):
+ if not corners:return ("不明",50.0)
+ lasts=[x[-1] for x in corners if x]
+ if not lasts:return ("不明",50.0)
+ a=sum(lasts)/len(lasts)
+ if a<=2.7:return ("逃・先",62.0)
+ if a<=5.2:return ("先・好位",58.0)
+ if a<=8.0:return ("中団",53.0)
+ return ("差・追",50.0)
+
+def _condition_score(finishes,body_diff):
+ s=50.0
+ if len(finishes)>=2:
+  trend=finishes[1]-finishes[0]  # positive means latest finish improved
+  s+=max(-12.0,min(12.0,trend*2.0))
+ if body_diff is not None:
+  d=abs(body_diff)
+  if d>=25:s-=12
+  elif d>=15:s-=6
+  elif d<=8:s+=3
+ return max(0.0,min(100.0,s))
+
+def parse_deba(s):
+ """Best-effort parser for NAR official DebaTable.
+    Uses only fields actually present on the official entry table. Missing factors stay neutral.
+ """
+ out={};last_frame=None
+ for tr in s.find_all("tr"):
+  cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
+  if len(cells)<3:continue
+  isint=lambda x:bool(re.fullmatch(r"\d{1,2}",x or ""))
+  frame=horse=None;name=None;offset=0
+  if len(cells)>=3 and isint(cells[0]) and isint(cells[1]):
+   f,h=int(cells[0]),int(cells[1])
+   if 1<=f<=8 and 1<=h<=18:
+    frame,horse,last_frame=f,h,f;name=cells[2].strip();offset=2
+  elif isint(cells[0]) and last_frame is not None:
+   h=int(cells[0])
+   if 1<=h<=18 and len(cells)>1 and not isint(cells[1]):
+    frame,horse=last_frame,h;name=cells[1].strip();offset=1
+  if horse is None or not name or len(name)<2:continue
+  text=" ".join(cells)
+  # Guard against accidental subrows.
+  if "全" not in text and "前走" not in text and not re.search(r"\d{2}\.\d{2}\.\d{2}",text):
+   # Still retain basic horse info, but don't let an unrelated row overwrite a richer row.
+   if horse in out:continue
+  overall=_rec4(text,"全");course=_rec4(text,"場");distance=_rec4(text,"距")
+  finishes=[int(x) for x in re.findall(r"(?:^|\s)(\d{1,2})\s+\d{2}\.\d{2}\.\d{2}",text)][:5]
+  corners=[]
+  # Corner order is printed immediately after each race time (e.g. 1:37.3 4-7-5-4).
+  # Anchoring to the time avoids confusing record strings such as 2-1-1-6 with running positions.
+  for m in re.finditer(r"[0-2]:\d{2}\.\d\s+((?:\d{1,2}-){1,3}\d{1,2})",text):
+   vals=[int(v) for v in m.group(1).split("-")]
+   if 2<=len(vals)<=4 and all(1<=v<=18 for v in vals):corners.append(vals)
+  corners=corners[:5]
+  style,style_base=_style_from_corners(corners)
+  bw=None;bd=None
+  mb=re.search(r"(?<!\d)(\d{3})\s*\(([+-]?\d+)\)",text)
+  if mb:bw,bd=int(mb.group(1)),int(mb.group(2))
+  # Current-jockey/horse combination record is shown after assigned weight on many NAR tables.
+  jm=re.search(r"(?:▲|△|☆|◇)?\s*\d{2}\.0\s+(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",text)
+  jrec=tuple(map(int,jm.groups())) if jm else (0,0,0,0)
+  jockey_score=_record_score(jrec) if sum(jrec)>0 else 50.0
+  # Names: first visible name after horse is generally jockey; trainer often appears in same cell.
+  staff=cells[offset+1] if len(cells)>offset+1 else ""
+  staff_parts=[x for x in re.split(r"\s+",staff) if x]
+  jockey=staff_parts[0] if staff_parts else ""
+  form=_form_score(finishes)
+  dist=_record_score(distance);crs=_record_score(course)
+  cond=_condition_score(finishes,bd)
+  out[horse]={"profile_version":PROFILE_VERSION,"frame":frame,"horse":horse,"name":name,
+   "jockey":jockey,"overall_record":overall,"course_record":course,"distance_record":distance,
+   "recent_finishes":finishes,"corners":corners,"style":style,"style_base":round(style_base,1),
+   "body_weight":bw,"body_diff":bd,"form_score":round(form,1),"distance_score":round(dist,1),
+   "course_score":round(crs,1),"jockey_score":round(jockey_score,1),"condition_score":round(cond,1)}
+ return out
+
+def load_profiles(key):
+ c=con();rows=c.execute("SELECT horse,payload FROM profiles WHERE race_key=%s",(key,)).fetchall();c.close()
+ out={}
+ for x in rows:
+  try:
+   p=json.loads(x["payload"])
+   if int(p.get("profile_version") or 0)>=PROFILE_VERSION:out[int(x["horse"])]=p
+  except:pass
+ return out
+
+def get_profiles(r,force=False):
+ old=load_profiles(r["race_key"])
+ if old and not force:return old
+ try:
+  prof=parse_deba(soup("DebaTable",qfor(r)))
+  if prof:
+   now=datetime.now(JST).isoformat();c=con()
+   for h,p in prof.items():
+    c.execute("INSERT INTO profiles(race_key,horse,payload,fetched_at) VALUES(%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET payload=EXCLUDED.payload,fetched_at=EXCLUDED.fetched_at",
+              (r["race_key"],h,json.dumps(p,ensure_ascii=False),now))
+   c.commit();c.close();return prof
+ except Exception:pass
+ return old
+
+def _pace_fit(style,front_count):
+ if style=="逃・先":return 72.0 if front_count<=2 else (58.0 if front_count==3 else 43.0)
+ if style=="先・好位":return 64.0 if front_count<=3 else 70.0
+ if style=="中団":return 56.0 if front_count<=3 else 64.0
+ if style=="差・追":return 48.0 if front_count<=2 else (60.0 if front_count==3 else 70.0)
+ return 50.0
 
 def take(r):
  q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
@@ -218,47 +354,32 @@ def predictions(key):
  A=final_features(key);out=[]
  for x in A:
   lp=model_score(x)
-  # Keep heuristic score visible; learned probability is separate.
-  # If a validated learned model is active, use it only for ranking.
-  x["score"]=x["heuristic"];x["learned_prob"]=lp
-  x["rank_score"]=(lp if lp is not None else x["heuristic"]/100.0)
+  learned_market=(lp if lp is not None else x["market_score"]/100.0)
+  rank_score=.55*learned_market+.45*(x["performance_score"]/100.0)
+  x["learned_prob"]=lp;x["rank_score"]=rank_score;x["score"]=x["scope_score"]
   out.append(x)
- return sorted(out,key=lambda x:-x["rank_score"])
+ return sorted(out,key=lambda x:(-x["rank_score"],x["pop"]))
+
+def scope_label(x):
+ total=float(x.get("scope_score") or x.get("score") or 0);market=float(x.get("market_score") or 0);perf=float(x.get("performance_score") or 0)
+ flow=float(x.get("win_flow_pct") or 0);move=float(x.get("win_move_score") or 0)
+ if total>=74 and market>=60 and perf>=58 and (flow>=8 or move>=18):return "CORE"
+ if total>=66 and market>=55 and perf>=48 and (flow>=5 or move>=12):return "VALUE"
+ if total>=58 and market>=45:return "WATCH"
+ return "NO SIGNAL"
+
 def adaptive_candidates(A):
- if not A:return [],None
- scores=[float(x.get("score") or 0) for x in A]
- m=med(scores);mad=med([abs(v-m) for v in scores])
- # Absolute floor prevents noise; race-relative cutoff prevents the v9.4 scale
- # from suppressing every race simply because all heuristic scores are compressed.
- relative=m+(0.75*1.4826*mad if mad>1e-9 else 0.0)
- cutoff=max(28.0,min(48.0,relative))
- C=[]
- for x in A:
-  sc=float(x.get("score") or 0);wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0)
-  d2=float(x.get("d2") or 0);agree=float(x.get("agree") or 0);persist=float(x.get("persist") or 0)
-  # Need at least one direct money-flow/anomaly acceleration signal and one corroborating signal.
-  movement=(wm>=10 or flow>=8 or d2>0.08)
-  corroborated=(agree>=1/3 or persist>=0.50)
-  if sc>=cutoff and movement and corroborated:C.append(x)
- # Borderline fallback: allow one WATCH candidate only when direct win-odds flow is genuinely visible.
- if not C and A:
-  x=A[0];sc=float(x.get("score") or 0);wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0)
-  agree=float(x.get("agree") or 0);persist=float(x.get("persist") or 0)
-  if sc>=25 and (wm>=18 or flow>=12) and (agree>=1/3 or persist>=0.50):C=[x]
- return C[:3],round(cutoff,1)
+ C=[x for x in A if scope_label(x)!="NO SIGNAL"]
+ return C[:3],None
 
 def save_predictions(key):
  A=predictions(key);C,_=adaptive_candidates(A)
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
+
 def signal_strength(x):
- rel=tail_reliability(x.get("pop",99),x.get("odds",999))
- wm=float(x.get("win_move_score") or 0);flow=float(x.get("win_flow_pct") or 0);d2=float(x.get("d2") or 0)
- if x["score"]>=68 and x.get("agree",0)>=2/3 and (wm>=30 or d2>0.20) and rel>=.80:return "STRONG"
- if x["score"]>=45 and x.get("agree",0)>=1/3 and (wm>=12 or flow>=8 or d2>0.08):return "MEDIUM"
- if x["score"]>=25 and (wm>=10 or flow>=8 or d2>0.05):return "WATCH"
- return "WEAK"
+ return scope_label(x)
 
 FEATURES=("base15","base10","base5","d1","d2","agree","persist","win_flow1","win_flow2","win_move","log_odds","pop_scaled")
 MIN_TRAIN_RACES=30
@@ -274,6 +395,8 @@ def final_features(key):
  if not all(k in S for k in ("15","10","5")):return []
  def mp(k):return {str(x["horse"]):x for x in S[k].get("rows",[])}
  a,b,z=mp("15"),mp("10"),mp("5");raw=[]
+ profiles=load_profiles(key)
+ front_count=sum(1 for p in profiles.values() if p.get("style")=="逃・先")
  for h,x in z.items():
   if h not in a or h not in b:continue
   d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
@@ -281,9 +404,10 @@ def final_features(key):
   agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
   o15=float(a[h]["odds"]);o10=float(b[h]["odds"]);o5=float(x["odds"])
   wf1=_win_flow(o15,o10);wf2=_win_flow(o10,o5);wm=.30*wf1+.70*wf2
+  p=profiles.get(int(h),{})
   raw.append({**x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":x["base"],
    "d1":d1,"d2":d2,"agree":agree,"persist":persist,"odds15":o15,"odds10":o10,"odds5":o5,
-   "win_flow1":wf1,"win_flow2":wf2,"win_move":wm})
+   "win_flow1":wf1,"win_flow2":wf2,"win_move":wm,"profile":p})
  if not raw:return []
  wz=rz([r["win_move"] for r in raw]);out=[]
  for r,wzr in zip(raw,wz):
@@ -294,10 +418,19 @@ def final_features(key):
   persist2=.60*r["persist"]+.40*win_persist
   rel=float(r.get("reliability",tail_reliability(r["pop"],r["odds"])))
   rawh=100*(.30*level+.20*accel+.30*win_signal+.10*r["agree"]+.10*persist2)
-  heuristic=max(0,min(100,round(rawh*rel)))
+  market_score=max(0,min(100,round(rawh*rel)))
   flow_pct=((r["odds15"]/r["odds5"])-1.0)*100 if r["odds5"]>0 else 0.0
-  out.append({**r,"persist":persist2,"reliability":rel,"heuristic":heuristic,"win_move_z":wzr,
-              "win_move_score":round(100*win_signal),"win_flow_pct":flow_pct})
+  p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count)
+  form=float(p.get("form_score",50));dist=float(p.get("distance_score",50));course=float(p.get("course_score",50))
+  jockey=float(p.get("jockey_score",50));cond=float(p.get("condition_score",50))
+  performance=.32*form+.23*dist+.17*course+.10*jockey+.08*cond+.10*pace_fit
+  scope=.55*market_score+.45*performance
+  out.append({**r,"persist":persist2,"reliability":rel,"market_score":round(market_score,1),
+              "performance_score":round(performance,1),"scope_score":round(scope,1),"heuristic":round(market_score,1),
+              "win_move_z":wzr,"win_move_score":round(100*win_signal),"win_flow_pct":flow_pct,
+              "form_score":round(form,1),"distance_score":round(dist,1),"course_score":round(course,1),
+              "jockey_score":round(jockey,1),"condition_score":round(cond,1),"pace_score":round(pace_fit,1),
+              "style":style,"frame":p.get("frame"),"name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey","")})
  return out
 
 def store_learning_samples(key,rs):
@@ -354,9 +487,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=5 ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=6 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=5 LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=6 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -403,6 +536,8 @@ def parse_result(s):
 def due():
  now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved'").fetchall()];c.close();ev=[]
  for r in rr:
+  try:get_profiles(r)
+  except Exception:pass
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
   for slot in (15,10,5):
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
@@ -436,7 +571,12 @@ def reserve():
   c=con()
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
   ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
-  c.commit();c.close();return jsonify(ok=True,race_key=key)
+  c.commit();c.close()
+  try:
+   rr={"race_key":key,"date":x["date"],"baba":str(x["baba"]),"baba_name":x["baba_name"],"race":int(x["race"]),"start_iso":st.isoformat()}
+   get_profiles(rr,force=True)
+  except Exception:pass
+  return jsonify(ok=True,race_key=key)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/races")
 def races():
@@ -451,13 +591,14 @@ def races():
   pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(r["race_key"],)).fetchall()] if all(k in S for k in ("15","10","5")) else []
   fm={x["horse"]:x for x in final_features(r["race_key"])} if all(k in S for k in ("15","10","5")) else {}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
    p["strength"]=signal_strength(p)
   rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
   if result:
    places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
    for p in pp:p["finish"]=places.get(p["horse"],0)
-  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"result":result})
+  rankings=predictions(r["race_key"]) if all(k in S for k in ("15","10","5")) else []
+  out.append({**r,"slots":[int(x) for x in S],"stages":stages,"predictions":pp,"rankings":rankings,"result":result})
  c.close();return jsonify(races=out)
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
@@ -479,14 +620,15 @@ def status():
  pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()] if all(k in S for k in ("15","10","5")) else []
  fm={x["horse"]:x for x in final_features(key)} if all(k in S for k in ("15","10","5")) else {}
  for p in pp:
-  if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct")})
+  if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
   p["strength"]=signal_strength(p)
  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();result=dict(rs) if rs else None
  if result:
   places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
   for p in pp:p["finish"]=places.get(p["horse"],0)
  c.close()
- return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,result=result)
+ rankings=predictions(key) if all(k in S for k in ("15","10","5")) else []
+ return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,profiles=load_profiles(key),result=result)
 @app.route("/api/repair-result",methods=["POST"])
 def repair_result():
  try:
@@ -507,11 +649,21 @@ def odds_check():
   return jsonify(ok=bool(W) and 0.55<=market_sum<=2.20,count=len(W),market_sum=round(market_sum,4),win_odds=W)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 
+
+@app.route("/api/profile-refresh",methods=["POST"])
+def profile_refresh():
+ try:
+  key=request.get_json(force=True)["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone();c.close()
+  if not r:return jsonify(ok=False,error="race not found"),404
+  p=get_profiles(dict(r),force=True);return jsonify(ok=True,count=len(p),profiles=p)
+ except Exception as e:return jsonify(ok=False,error=str(e)),500
+
+
 @app.route("/api/learning")
 def learning():
  c=con()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=5").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=5").fetchone()["n"]
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=6").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=6").fetchone()["n"]
  n=lraces
  p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
               WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=4)""").fetchall()

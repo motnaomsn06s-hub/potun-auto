@@ -189,3 +189,15 @@ def score_horses(horses):
     result.sort(key=lambda x: x["signal"], reverse=True)
 
     return result
+
+
+# ODDS SCOPE NAR Ver.10 hybrid helpers
+FRAME_COLORS={1:"white",2:"black",3:"red",4:"blue",5:"yellow",6:"green",7:"orange",8:"pink"}
+
+def performance_score(form=50,distance=50,course=50,pace=50,jockey=50,condition=50):
+    return round(max(0.0,min(100.0,
+        float(form)*.32 + float(distance)*.23 + float(course)*.17 +
+        float(jockey)*.10 + float(condition)*.08 + float(pace)*.10)),1)
+
+def scope_score(market, performance):
+    return round(max(0.0,min(100.0,float(market)*.55+float(performance)*.45)),1)
