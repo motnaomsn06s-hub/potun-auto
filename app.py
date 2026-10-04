@@ -7,7 +7,7 @@ from datetime import datetime,timezone,timedelta
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.2)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.3)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -180,7 +180,7 @@ DATA_VERSION=6
 
 
 
-PROFILE_VERSION=1
+PROFILE_VERSION=2
 
 def _rec4(text,label):
  m=re.search(label+r"\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",text)
@@ -225,6 +225,22 @@ def _condition_score(finishes,body_diff):
   elif d<=8:s+=3
  return max(0.0,min(100.0,s))
 
+def _jockey_info(text):
+ # NAR small entry table places current jockey, affiliation and the horse×jockey record together.
+ # Example: 600 赤塚健 （ばんえい） 3-2-0-25.
+ head=re.split(r"\d{2}\.\d{2}",text,maxsplit=1)[0]
+ pats=[
+  r"(?:★|▲|△|☆|◇)?\s*\d{2,3}(?:\.\d)?\s+([^\d\s（）()]{2,12})\s*[（(][^）)]{0,24}[）)]\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",
+  r"([^\d\s（）()]{2,12})\s*[（(][^）)]{0,24}[）)]\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)"
+ ]
+ for pat in pats:
+  m=re.search(pat,head)
+  if m:
+   name=m.group(1).strip();rec=tuple(map(int,m.groups()[1:]));return name,rec
+ # Safe fallback: before the first past-race date, the first W-S-T-O record is the current jockey/horse record.
+ recs=re.findall(r"(?<!\d)(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)(?!\d)",head)
+ return "",tuple(map(int,recs[0])) if recs else (0,0,0,0)
+
 def parse_deba(s):
  """Best-effort parser for NAR official DebaTable.
     Uses only fields actually present on the official entry table. Missing factors stay neutral.
@@ -262,14 +278,15 @@ def parse_deba(s):
   bw=None;bd=None
   mb=re.search(r"(?<!\d)(\d{3})\s*\(([+-]?\d+)\)",text)
   if mb:bw,bd=int(mb.group(1)),int(mb.group(2))
-  # Current-jockey/horse combination record is shown after assigned weight on many NAR tables.
-  jm=re.search(r"(?:▲|△|☆|◇)?\s*\d{2}\.0\s+(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",text)
-  jrec=tuple(map(int,jm.groups())) if jm else (0,0,0,0)
-  jockey_score=_record_score(jrec) if sum(jrec)>0 else 50.0
-  # Names: first visible name after horse is generally jockey; trainer often appears in same cell.
-  staff=cells[offset+1] if len(cells)>offset+1 else ""
-  staff_parts=[x for x in re.split(r"\s+",staff) if x]
-  jockey=staff_parts[0] if staff_parts else ""
+  # Current horse×jockey record from the official entry table. Missing data stays neutral internally,
+  # but the UI marks it as unavailable instead of pretending that 50 is a measured score.
+  jockey,jrec=_jockey_info(text)
+  jockey_has_data=sum(jrec)>0
+  jockey_score=_record_score(jrec) if jockey_has_data else 50.0
+  if not jockey:
+   staff=cells[offset+1] if len(cells)>offset+1 else ""
+   staff_parts=[x for x in re.split(r"\s+",staff) if x]
+   jockey=staff_parts[0] if staff_parts else ""
   form=_form_score(finishes)
   dist=_record_score(distance);crs=_record_score(course)
   cond=_condition_score(finishes,bd)
@@ -277,7 +294,8 @@ def parse_deba(s):
    "jockey":jockey,"overall_record":overall,"course_record":course,"distance_record":distance,
    "recent_finishes":finishes,"corners":corners,"style":style,"style_base":round(style_base,1),
    "body_weight":bw,"body_diff":bd,"form_score":round(form,1),"distance_score":round(dist,1),
-   "course_score":round(crs,1),"jockey_score":round(jockey_score,1),"condition_score":round(cond,1)}
+   "course_score":round(crs,1),"jockey_score":round(jockey_score,1),"jockey_record":list(jrec),
+   "jockey_has_data":jockey_has_data,"condition_score":round(cond,1)}
  return out
 
 def load_profiles(key):
@@ -294,7 +312,13 @@ def get_profiles(r,force=False):
  old=load_profiles(r["race_key"])
  if old and not force:return old
  try:
-  prof=parse_deba(soup("DebaTable",qfor(r)))
+  prof={}
+  for path in ("DebaTableSmall","DebaTable"):
+   try:
+    prof=parse_deba(soup(path,qfor(r)))
+    if prof:break
+   except Exception:
+    prof={}
   if prof:
    now=datetime.now(JST).isoformat();c=con()
    for h,p in prof.items():
@@ -350,16 +374,18 @@ def point_signals(payload,prev=None):
               "prev_odds":p.get("odds") if p else None,"win_flow":wf,"win_pct":pct,"win_flow_z":wz})
  return sorted(raw,key=lambda x:-x["score"])[:3]
 
-def predictions(key,model_state=None):
- A=final_features(key);out=[]
- state=model_state if model_state is not None else get_model_state()
- for x in A:
-  lp=model_score(x,state)
+def rank_features(A,model_state=None):
+ out=[];state=model_state if model_state is not None else get_model_state()
+ for src in A:
+  x=dict(src);lp=model_score(x,state)
   learned_market=(lp if lp is not None else x["market_score"]/100.0)
   rank_score=.55*learned_market+.45*(x["performance_score"]/100.0)
   x["learned_prob"]=lp;x["rank_score"]=rank_score;x["score"]=x["scope_score"]
   out.append(x)
  return sorted(out,key=lambda x:(-x["rank_score"],x["pop"]))
+
+def predictions(key,model_state=None):
+ return rank_features(final_features(key),model_state)
 
 def scope_label(x):
  total=float(x.get("scope_score") or x.get("score") or 0);market=float(x.get("market_score") or 0);perf=float(x.get("performance_score") or 0)
@@ -430,7 +456,8 @@ def final_features(key):
               "performance_score":round(performance,1),"scope_score":round(scope,1),"heuristic":round(market_score,1),
               "win_move_z":wzr,"win_move_score":round(100*win_signal),"win_flow_pct":flow_pct,
               "form_score":round(form,1),"distance_score":round(dist,1),"course_score":round(course,1),
-              "jockey_score":round(jockey,1),"condition_score":round(cond,1),"pace_score":round(pace_fit,1),
+              "jockey_score":round(jockey,1),"jockey_record":p.get("jockey_record",[0,0,0,0]),
+              "jockey_has_data":bool(p.get("jockey_has_data",False)),"condition_score":round(cond,1),"pace_score":round(pace_fit,1),
               "style":style,"frame":p.get("frame"),"name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey","")})
  return out
 
@@ -543,10 +570,14 @@ def parse_result(s):
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 def due():
  now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved'").fetchall()];c.close();ev=[]
+ profile_budget=2  # avoid making one cron tick wait on every future race at once
  for r in rr:
-  try:get_profiles(r)
-  except Exception:pass
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
+  if -5<=mins<=360 and profile_budget>0:
+   try:
+    if not load_profiles(r["race_key"]):
+     get_profiles(r);profile_budget-=1;ev.append(f'{r["race_key"]}:PROFILE')
+   except Exception as e:ev.append("ERR profile "+str(e))
   for slot in (15,10,5):
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
    ex=False
@@ -580,11 +611,8 @@ def reserve():
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
   ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
   c.commit();c.close()
-  try:
-   rr={"race_key":key,"date":x["date"],"baba":str(x["baba"]),"baba_name":x["baba_name"],"race":int(x["race"]),"start_iso":st.isoformat()}
-   get_profiles(rr,force=True)
-  except Exception:pass
-  return jsonify(ok=True,race_key=key)
+  # Return immediately. Official entry-table profiles are prefetched by /api/tick so reservation does not block on NAR.
+  return jsonify(ok=True,race_key=key,profile_status="queued")
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/races")
 def races():
@@ -647,17 +675,19 @@ def status():
   if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
   if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
   full=all(k in S for k in ("15","10","5"))
-  fm={x["horse"]:x for x in final_features(key)} if full else {}
+  features=final_features(key) if full else []
+  fm={x["horse"]:x for x in features}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","condition_score","pace_score","style","frame","name","jockey")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey")})
    p["strength"]=signal_strength(p)
   result=dict(rs) if rs else None
   if result:
    places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
    for p in pp:p["finish"]=places.get(p["horse"],0)
   state=get_model_state() if full else {}
-  rankings=predictions(key,state) if full else []
-  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,profiles=load_profiles(key),result=result)
+  rankings=rank_features(features,state) if full else []
+  profile_ready=any(x.get("name") and x.get("frame") for x in features) if full else bool(load_profiles(key))
+  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,result=result,profile_ready=profile_ready)
  except Exception as e:
   try:c.close()
   except Exception:pass
