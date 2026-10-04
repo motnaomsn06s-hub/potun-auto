@@ -4,10 +4,11 @@ import psycopg
 from psycopg.rows import dict_row
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/10.3)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/11.1)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -48,16 +49,18 @@ def init():
  c.commit();c.close()
  # PostgreSQL migration. Version 10 adds official NAR performance profiles while preserving market learning.
  c=con()
- for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),
-                 ("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION")):
+ for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),("odds3","DOUBLE PRECISION"),
+                 ("base3","DOUBLE PRECISION"),("d3","DOUBLE PRECISION"),("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_flow3","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION"),
+                 ("gap_score","DOUBLE PRECISION"),("isolation_score","DOUBLE PRECISION"),("float_score","DOUBLE PRECISION"),("cross_score","DOUBLE PRECISION"),("potun_score","DOUBLE PRECISION"),("accel_score","DOUBLE PRECISION"),
+                 ("dna_score","DOUBLE PRECISION"),("edge_score","DOUBLE PRECISION"),("scope_score","DOUBLE PRECISION")):
   try:
    c.execute(f"ALTER TABLE learning_samples ADD COLUMN {col} {typ}");c.commit()
   except Exception:c.rollback()
  c.close()
- c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v10_scope_hybrid'").fetchone()
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v11_1_late_accel'").fetchone()
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
-  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v10_scope_hybrid','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v11_1_late_accel','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -101,7 +104,11 @@ def med(a):
  b=sorted(a);n=len(b);return 0 if not n else b[n//2] if n%2 else (b[n//2-1]+b[n//2])/2
 def rz(a):
  if not a:return []
- m=med(a);mad=med([abs(x-m) for x in a]);return [0]*len(a) if mad<1e-9 else [(x-m)/(1.4826*mad) for x in a]
+ m=med(a);mad=med([abs(x-m) for x in a])
+ if mad>=1e-9:return [(x-m)/(1.4826*mad) for x in a]
+ # Sparse markets often have many equal values and one true outlier. MAD=0 must not erase it.
+ mu=sum(a)/len(a);sd=math.sqrt(sum((x-mu)**2 for x in a)/len(a)) if a else 0
+ return [0.0]*len(a) if sd<1e-9 else [(x-mu)/sd for x in a]
 
 def band_rz(values,model_probs):
  # Compare a combination only with combinations of similar theoretical probability.
@@ -137,46 +144,114 @@ def agg(a):
  return .65*center+.20*tails+.15*breadth
 
 def tail_reliability(pop,odds):
- # Soft confidence adjustment only; never hard-excludes a longshot.
- # Extreme longshots need stronger anomaly evidence before receiving the same
- # candidate score as a horse with a materially higher baseline chance.
- p=max(0,int(pop)-8)*.06
- o=max(0.0,math.log(max(float(odds),1.0)/40.0))*.10
- return max(.70,min(1.0,1.0-p-o))
+ # Longshots are allowed, but a very thin baseline needs stronger corroboration.
+ p=max(0,int(pop)-9)*.035
+ o=max(0.0,math.log(max(float(odds),1.0)/70.0))*.06
+ return max(.76,min(1.0,1.0-p-o))
 
-def analyse(W,Q,E,T):
+def _anom_scores(values):
+ """Positive-outlier score: ordinary values stay near 0; only true race-relative anomalies rise."""
+ if not values:return []
+ vals=[float(v or 0) for v in values];m=med(vals);mad=med([abs(x-m) for x in vals])
+ if mad<1e-9:
+  mu=sum(vals)/len(vals);sd=math.sqrt(sum((x-mu)**2 for x in vals)/len(vals)) if vals else 0
+  if sd<1e-9:return [0.0 for _ in vals]
+  return [round(100.0*math.tanh(max(0.0,(v-mu)/sd)/2.0),1) for v in vals]
+ out=[]
+ for v in vals:
+  z=max(0.0,(v-m)/(1.4826*mad))
+  out.append(round(100.0*math.tanh(z/2.0),1))
+ return out
+
+def _market_structure(W):
+ """Detect the user's visual odds cues: cliff (GAP) and isolated/POツン price position."""
+ ordered=sorted(W,key=lambda x:(x[1],x[0]));n=len(ordered)
+ gap_raw=[];iso_raw=[]
+ for i,(h,o) in enumerate(ordered):
+  lo=math.log(max(o,1.000001))
+  after=math.log(ordered[i+1][1])-lo if i+1<n else 0.0
+  before=lo-math.log(ordered[i-1][1]) if i>0 else 0.0
+  gap_raw.append(max(0.0,after))
+  # An isolated point must have space on BOTH sides; endpoints are not called isolated.
+  iso_raw.append(max(0.0,min(before,after)) if 0<i<n-1 else 0.0)
+ gaps=_anom_scores(gap_raw);isos=_anom_scores(iso_raw)
+ return {h:{"gap_score":gaps[i],"isolation_score":isos[i],"gap_raw":gap_raw[i],"isolation_raw":iso_raw[i]} for i,(h,_) in enumerate(ordered)}
+
+def _order3_prob(a,b,c,P):
+ try:return P[a]*P[b]/max(1-P[a],1e-12)*P[c]/max(1-P[a]-P[b],1e-12)
+ except:return 0.0
+
+def _unordered3_prob(hs,P):
+ import itertools
+ return sum(_order3_prob(*perm,P) for perm in itertools.permutations(hs,3))
+
+def _wide_prob(i,j,P):
+ # Approximate probability that i and j both finish in the first 3 under Plackett-Luce.
+ return sum(_unordered3_prob((i,j,k),P) for k in P if k not in (i,j))
+
+def analyse(W,Q,E,T,Wide=None,Trio=None):
  inv={h:1/o for h,o in W};sm=sum(inv.values());P={h:v/sm for h,v in inv.items()};od=dict(W)
  pop={h:i+1 for i,(h,o) in enumerate(sorted(W,key=lambda x:(x[1],x[0])))}
- B={h:{k:[] for k in "QET"} for h in P}
+ structure=_market_structure(W)
+ markets={"Q":Q or [],"E":E or [],"W":Wide or [],"R":Trio or [],"T":T or []}
+ B={h:{k:[] for k in markets} for h in P}
  def market(rows,k):
   mod=[];act=[];hh=[]
   for a in rows:
    hs,o=a[:-1],a[-1]
    try:
     if k=="Q":
-     i,j=hs;pr=P[i]*P[j]/max(1-P[i],1e-9)+P[j]*P[i]/max(1-P[j],1e-9)
+     i,j=hs;pr=P[i]*P[j]/max(1-P[i],1e-12)+P[j]*P[i]/max(1-P[j],1e-12)
     elif k=="E":
-     i,j=hs;pr=P[i]*P[j]/max(1-P[i],1e-9)
+     i,j=hs;pr=P[i]*P[j]/max(1-P[i],1e-12)
+    elif k=="W":
+     i,j=hs;pr=_wide_prob(i,j,P)
+    elif k=="R":
+     pr=_unordered3_prob(tuple(hs),P)
     else:
-     i,j,z=hs;pr=P[i]*P[j]/max(1-P[i],1e-9)*P[z]/max(1-P[i]-P[j],1e-9)
+     i,j,z=hs;pr=_order3_prob(i,j,z,P)
    except:continue
-   if pr>0 and o>0:mod.append(pr);act.append(1/o);hh.append(hs)
+   if pr>0 and o>0 and all(h in P for h in hs):mod.append(pr);act.append(1/o);hh.append(hs)
   if not hh:return
   ms=sum(mod);aa=sum(act)
+  if ms<=0 or aa<=0:return
   modelp=[m/ms for m in mod];actualp=[a/aa for a in act]
   D=[math.log(max(ap,1e-15)/max(mp,1e-15)) for ap,mp in zip(actualp,modelp)]
   Z=band_rz(D,modelp)
   for z,hs in zip(Z,hh):
    for h in hs:
     if h in B:B[h][k].append(z)
- market(Q,"Q");market(E,"E");market(T,"T")
- out=[]
+ for k,rows in markets.items():market(rows,k)
+ # Aggregate first, then compare win-pop rank with cross-market support rank (FLOAT).
+ temp=[]
  for h,b in B.items():
-  q,e,t=agg(b["Q"]),agg(b["E"]),agg(b["T"])
-  out.append({"horse":h,"odds":od[h],"pop":pop[h],"Q":q,"E":e,"T":t,
-              "base":(q+e+t)/3,"reliability":tail_reliability(pop[h],od[h])})
+  mk={k:agg(v) for k,v in b.items() if v}
+  vals=list(mk.values());base=sum(vals)/len(vals) if vals else 0.0
+  positive=sum(v>0 for v in vals);agree=positive/len(vals) if vals else 0.0
+  cross_raw=(sum(max(0.0,v) for v in vals)/len(vals) if vals else 0.0)
+  # POTUN: one combination being a much larger local outlier than the horse's normal combinations.
+  spikes=[]
+  for v in b.values():
+   if len(v)>=3:
+    vv=sorted(v,reverse=True);spikes.append(max(0.0,vv[0]-med(vv))*.7+max(0.0,vv[0]-vv[1])*.3)
+  potun_raw=max(spikes) if spikes else 0.0
+  temp.append((h,mk,base,agree,cross_raw,potun_raw))
+ cross_rank={h:i+1 for i,(h,*_) in enumerate(sorted(temp,key=lambda z:(-z[2],pop[z[0]])))}
+ potun_scores=_anom_scores([z[5] for z in temp])
+ out=[]
+ for idx,(h,mk,base,agree,cross_raw,potun_raw) in enumerate(temp):
+  rank_adv=max(0.0,float(pop[h]-cross_rank[h])) if base>0 else 0.0
+  float_score=round(min(100.0,70.0*math.tanh(rank_adv/max(2.5,len(temp)*.22))+30.0*math.tanh(max(0.0,base)/1.5)),1)
+  cross_score=round(min(100.0,100.0*(.62*agree+.38*math.tanh(max(0.0,cross_raw)/1.8))),1)
+  st=structure.get(h,{})
+  out.append({"horse":h,"odds":od[h],"pop":pop[h],"win_share":P[h],
+              "Q":mk.get("Q",0.0),"E":mk.get("E",0.0),"W":mk.get("W",0.0),"R":mk.get("R",0.0),"T":mk.get("T",0.0),
+              "base":base,"cross_agree":agree,"cross_score":cross_score,"float_score":float_score,
+              "potun_score":potun_scores[idx],"potun_raw":potun_raw,
+              "gap_score":st.get("gap_score",0.0),"isolation_score":st.get("isolation_score",0.0),
+              "reliability":tail_reliability(pop[h],od[h])})
  return out
-DATA_VERSION=6
+DATA_VERSION=8
 
 
 
@@ -354,12 +429,24 @@ def _pace_fit(style,front_count):
  return None
 
 def take(r):
- q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
- cnt={"win":len(W),"Q":len(Q),"E":len(E),"T":len(T)}
- if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("オッズ取得不完全 "+str(cnt))
+ q=qfor(r)
+ paths={"win":"OddsTanFuku","Q":"OddsUmLenFuku","E":"OddsUmLenTan","W":"OddsWide","R":"Odds3LenFuku","T":"Odds3LenTan"}
+ pages={}
+ # Parallel retrieval cuts the snapshot delay while keeping each market independently optional.
+ with ThreadPoolExecutor(max_workers=4) as ex:
+  fut={ex.submit(soup,path,q):k for k,path in paths.items()}
+  for f in as_completed(fut):
+   k=fut[f]
+   try:pages[k]=f.result()
+   except Exception:pages[k]=None
+ if pages.get("win") is None:raise RuntimeError("単勝オッズ取得失敗")
+ W=win(pages["win"]);Q=combo(pages["Q"],2) if pages.get("Q") else [];E=combo(pages["E"],2) if pages.get("E") else []
+ Wide=combo(pages["W"],2) if pages.get("W") else [];Trio=combo(pages["R"],3) if pages.get("R") else [];T=combo(pages["T"],3) if pages.get("T") else []
+ cnt={"win":len(W),"Q":len(Q),"E":len(E),"W":len(Wide),"R":len(Trio),"T":len(T)}
+ if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("主要オッズ取得不完全 "+str(cnt))
  market_sum=sum(1.0/o for _,o in W if o>0)
  if not 0.55<=market_sum<=2.20:raise RuntimeError(f"単勝オッズ検証NG market_sum={market_sum:.3f} counts={cnt}")
- return {"rows":analyse(W,Q,E,T),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+ return {"rows":analyse(W,Q,E,T,Wide,Trio),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
 
 def valid_payload(p):
  return isinstance(p,dict) and int(p.get("parser_version") or 0)>=DATA_VERSION
@@ -370,33 +457,26 @@ def _win_flow(prev_odds,cur_odds):
 
 def point_signals(payload,prev=None):
  rows=payload.get("rows",[]);pm={str(x["horse"]):x for x in (prev or {}).get("rows",[])}
- raw=[];flows=[]
+ raw=[];share_moves=[]
  for x in rows:
   p=pm.get(str(x["horse"])) if pm else None
-  flows.append(_win_flow(p.get("odds") if p else None,x.get("odds")) if p else 0.0)
- zflows=rz(flows) if prev else [0.0]*len(rows)
- for x,wz,wf in zip(rows,zflows,flows):
-  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
-  level=math.tanh(max(0,x["base"])/2)
+  share_moves.append((float(x.get("win_share") or 0)-float(p.get("win_share") or 0)) if p else 0.0)
+ zshares=rz(share_moves) if prev else [0.0]*len(rows)
+ for x,sz,smv in zip(rows,zshares,share_moves):
   p=pm.get(str(x["horse"])) if pm else None
   delta=x["base"]-(p["base"] if p else x["base"])
-  anomaly_move=math.tanh(max(0,delta)/1.5) if p else 0
-  win_abs=math.tanh(max(0,wf)/0.30) if p else 0
-  win_rel=math.tanh(max(0,wz)/2.0) if p else 0
-  win_signal=.45*win_abs+.55*win_rel
-  raw_score=100*((.70 if not p else .42)*level+(.0 if not p else .10)*anomaly_move+(.0 if not p else .38)*win_signal+.10*agree)
-  rel=float(x.get("reliability",tail_reliability(x["pop"],x["odds"])))
-  score=round(raw_score*rel)
+  dna_now=.14*x.get("gap_score",0)+.16*x.get("isolation_score",0)+.14*x.get("float_score",0)+.20*x.get("cross_score",0)+.22*x.get("potun_score",0)
+  move=0 if not p else max(0.0,100.0*math.tanh(max(0.0,sz)/2.0))
+  score=max(0,min(100,round(.72*dna_now+.28*move)))
   pct=((p["odds"]/x["odds"])-1.0)*100 if p and x.get("odds") else None
-  raw.append({**x,"delta":delta,"agree":agree,"reliability":rel,"score":max(0,min(100,score)),
-              "prev_odds":p.get("odds") if p else None,"win_flow":wf,"win_pct":pct,"win_flow_z":wz})
+  raw.append({**x,"delta":delta,"score":score,"prev_odds":p.get("odds") if p else None,"win_pct":pct,"share_delta":smv*100})
  return sorted(raw,key=lambda x:-x["score"])[:3]
 
 def rank_features(A,model_state=None):
  out=[];state=model_state if model_state is not None else get_model_state()
  for src in A:
   x=dict(src);lp=model_score(x,state)
-  x["learned_prob"]=lp;x["rank_score"]=float(x.get("scope_score") or 0)/100.0;x["score"]=x.get("scope_score") or 0
+  x["learned_prob"]=lp;x["rank_score"]=float(x.get("scope_score") or 0)/100.0;x["score"]=x.get("scope_score") or 0;x["strength"]=scope_label(x)
   out.append(x)
  return sorted(out,key=lambda x:(-x["rank_score"],x.get("pop",99)))
 
@@ -404,29 +484,29 @@ def predictions(key,model_state=None):
  return rank_features(final_features(key),model_state)
 
 def scope_label(x):
- total=float(x.get("scope_score") or 0);flow=float(x.get("flow_score") or x.get("market_score") or 0)
+ scope=float(x.get("scope_score") or 0);dna=float(x.get("dna_score") or 0);flow=float(x.get("flow_score") or 0)
  edge=x.get("edge_score");conf=float(x.get("data_confidence") or 0)
- if edge is not None and total>=76 and edge>=66 and flow>=55 and conf>=55:return "CORE"
- if edge is not None and total>=68 and edge>=58 and flow>=48:return "VALUE"
- if total>=60 and flow>=45:return "WATCH"
- return "NO SIGNAL"
+ if scope>=82 and dna>=80 and flow>=62 and (edge is None or edge>=54):return "HOT"
+ if scope>=75 and dna>=68 and flow>=55 and (edge is None or edge>=50):return "CORE"
+ if (x.get("value_score") or 0)>=70 and dna>=58:return "VALUE"
+ if scope>=64 or dna>=62:return "WATCH"
+ return "NEUTRAL"
 
 def adaptive_candidates(A):
- C=[x for x in A if scope_label(x)!="NO SIGNAL"]
- return C[:3],None
+ # Always keep a visible ranking. Signal label tells the user whether the top horse is truly hot.
+ return A[:3],None
 
 def save_predictions(key):
- A=predictions(key);C,_=adaptive_candidates(A)
+ A=predictions(key);C=A[:3]
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
- for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x["d1"],x["d2"],x["agree"],datetime.now(JST).isoformat()))
+ for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x.get("d1",0),x.get("d2",0),x.get("agree",0),datetime.now(JST).isoformat()))
  c.commit();c.close();return C
 
-def signal_strength(x):
- return scope_label(x)
+def signal_strength(x):return scope_label(x)
 
-FEATURES=("base15","base10","base5","d1","d2","agree","persist","win_flow1","win_flow2","win_move","log_odds","pop_scaled")
-MIN_TRAIN_RACES=30
-MIN_TRAIN_SAMPLES=200
+FEATURES=("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","log_odds","pop_scaled")
+MIN_TRAIN_RACES=80
+MIN_TRAIN_SAMPLES=600
 
 def _sigmoid(z):
  z=max(-35.0,min(35.0,z))
@@ -440,61 +520,69 @@ def _weighted_available(items):
 def final_features(key):
  c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();c.close()
  S={str(x["slot"]):json.loads(x["payload"]) for x in ss};S={k:v for k,v in S.items() if valid_payload(v)}
- if not all(k in S for k in ("15","10","5")):return []
+ # 4分前は「直前加速」を見るための追加観測点。万一4分だけ欠けても3分FINALは止めない。
+ if not all(k in S for k in ("15","10","5","3")):return []
  def mp(k):return {str(x["horse"]):x for x in S[k].get("rows",[])}
- a,b,z=mp("15"),mp("10"),mp("5");raw=[]
- profiles=load_profiles(key)
- front_count=sum(1 for p in profiles.values() if p.get("style") in ("逃・先","先・好位"))
+ a,b,c5,z=mp("15"),mp("10"),mp("5"),mp("3");c4=mp("4") if "4" in S else {};raw=[]
+ profiles=load_profiles(key);front_count=sum(1 for p in profiles.values() if p.get("style") in ("逃・先","先・好位"))
  for h,x in z.items():
-  if h not in a or h not in b:continue
-  d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
-  persist=sum(v["base"]>0 for v in (a[h],b[h],x))/3
-  agree=sum(v>0 for v in (x["Q"],x["E"],x["T"]))/3
-  o15=float(a[h]["odds"]);o10=float(b[h]["odds"]);o5=float(x["odds"])
-  wf1=_win_flow(o15,o10);wf2=_win_flow(o10,o5);wm=.30*wf1+.70*wf2
+  if h not in a or h not in b or h not in c5:continue
+  v4=c4.get(h)
+  d1=b[h]["base"]-a[h]["base"];d2=c5[h]["base"]-b[h]["base"];d3=x["base"]-c5[h]["base"]
+  seq=[a[h],b[h],c5[h]]+([v4] if v4 else [])+[x]
+  persist=sum(v["base"]>0 for v in seq)/len(seq)
+  market_keys=("Q","E","W","R","T")
+  agree=sum(x.get(k,0)>0 for k in market_keys)/len(market_keys)
+  o15,o10,o5,o3=map(float,(a[h]["odds"],b[h]["odds"],c5[h]["odds"],x["odds"]));o4=float(v4["odds"]) if v4 else None
+  sh15,sh10,sh5,sh3=[float(v.get("win_share") or 0) for v in (a[h],b[h],c5[h],x)];sh4=float(v4.get("win_share") or 0) if v4 else None
+  sf1=(sh10-sh15)*100;sf2=(sh5-sh10)*100
+  if v4:
+   sf3=(sh4-sh5)*100;sf4=(sh3-sh4)*100
+   wf3a=_win_flow(o5,o4);wf3b=_win_flow(o4,o3)
+   late_flow=.45*wf3a+.55*wf3b
+   accel_raw=.08*sf1+.17*sf2+.30*sf3+.45*sf4+.25*max(0.0,sf3-sf2)+.45*max(0.0,sf4-sf3)
+  else:
+   sf3=(sh3-sh5)*100;sf4=None;wf3a=None;wf3b=None
+   late_flow=_win_flow(o5,o3)
+   accel_raw=.12*sf1+.28*sf2+.60*sf3+.40*max(0.0,sf3-sf2)
+  wf1=_win_flow(o15,o10);wf2=_win_flow(o10,o5)
   p=profiles.get(int(h),{})
-  raw.append({**x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":x["base"],
-   "d1":d1,"d2":d2,"agree":agree,"persist":persist,"odds15":o15,"odds10":o10,"odds5":o5,
-   "win_flow1":wf1,"win_flow2":wf2,"win_move":wm,"profile":p})
+  raw.append({**x,"base15":a[h]["base"],"base10":b[h]["base"],"base5":c5[h]["base"],"base4":v4["base"] if v4 else None,"base3":x["base"],
+   "d1":d1,"d2":d2,"d3":d3,"agree":agree,"persist":persist,"odds15":o15,"odds10":o10,"odds5":o5,"odds4":o4,"odds3":o3,
+   "win_flow1":wf1,"win_flow2":wf2,"win_flow3":late_flow,"win_flow54":wf3a,"win_flow43":wf3b,"win_move":.15*wf1+.25*wf2+.60*late_flow,
+   "share_flow1":sf1,"share_flow2":sf2,"share_flow3":sf3,"share_flow4":sf4,"accel_raw":accel_raw,"late_4m_ready":bool(v4),"profile":p})
  if not raw:return []
- wz=rz([r["win_move"] for r in raw]);out=[]
- for r,wzr in zip(raw,wz):
-  level=math.tanh(max(0,r["base5"])/2);accel=math.tanh(max(0,r["d2"])/1.5)
-  win_abs=math.tanh(max(0,r["win_move"])/0.30);win_rel=math.tanh(max(0,wzr)/2.0)
-  win_signal=.45*win_abs+.55*win_rel
-  win_persist=((1 if r["win_flow1"]>0 else 0)+(1 if r["win_flow2"]>0 else 0))/2
-  persist2=.60*r["persist"]+.40*win_persist
-  rel=float(r.get("reliability",tail_reliability(r["pop"],r["odds"])))
-  rawh=100*(.30*level+.20*accel+.30*win_signal+.10*r["agree"]+.10*persist2)
-  flow_score=max(0,min(100,round(rawh*rel)))
-  flow_pct=((r["odds15"]/r["odds5"])-1.0)*100 if r["odds5"]>0 else 0.0
+ az=rz([r["accel_raw"] for r in raw]);out=[]
+ for r,zacc in zip(raw,az):
+  accel_score=round(100.0*math.tanh(max(0.0,zacc)/2.0),1)
+  current_level=100.0*math.tanh(max(0.0,r["base3"])/2.0)
+  persistence=100.0*r["persist"]
+  flow_score=round(max(0,min(100,.30*current_level+.32*accel_score+.23*float(r.get("cross_score") or 0)+.15*persistence)),1)
+  gap=float(r.get("gap_score") or 0);iso=float(r.get("isolation_score") or 0);flo=float(r.get("float_score") or 0);cross=float(r.get("cross_score") or 0);pot=float(r.get("potun_score") or 0)
+  dna=round(.12*gap+.16*iso+.14*flo+.18*cross+.22*pot+.18*accel_score,1)
   p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count)
   form=p.get("form_score");dist=p.get("distance_score");course=p.get("course_score");jockey=p.get("jockey_score");cond=p.get("condition_score")
   edge,conf=_weighted_available([(form,.35),(dist,.20),(course,.15),(jockey,.10),(pace_fit,.10),(cond,.10)])
-  out.append({**r,"persist":persist2,"reliability":rel,"flow_score":round(flow_score,1),"market_score":round(flow_score,1),
+  out.append({**r,"flow_score":flow_score,"market_score":flow_score,"accel_score":accel_score,"dna_score":dna,
               "edge_score":round(edge,1) if edge is not None else None,"performance_score":round(edge,1) if edge is not None else None,
-              "data_confidence":round(conf,1),"win_move_z":wzr,"win_move_score":round(100*win_signal),"win_flow_pct":flow_pct,
-              "form_score":form,"distance_score":dist,"course_score":course,"jockey_score":jockey,
+              "data_confidence":round(conf,1),"form_score":form,"distance_score":dist,"course_score":course,"jockey_score":jockey,
               "jockey_record":p.get("jockey_record",[0,0,0,0]),"jockey_has_data":bool(p.get("jockey_has_data",False)),
-              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,
-              "style":style,"frame":p.get("frame"),"name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey",""),
-              "recent_finishes":p.get("recent_finishes",[]),"body_weight":p.get("body_weight"),"body_diff":p.get("body_diff")})
- # VALUE = ability rank versus market popularity, with a small positive-flow confirmation.
- edge_rows=sorted([x for x in out if x.get("edge_score") is not None],key=lambda x:-x["edge_score"])
- edge_rank={x["horse"]:i+1 for i,x in enumerate(edge_rows)}
+              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,"style":style,"frame":p.get("frame"),
+              "name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey",""),"recent_finishes":p.get("recent_finishes",[]),
+              "body_weight":p.get("body_weight"),"body_diff":p.get("body_diff")})
+ edge_rows=sorted([x for x in out if x.get("edge_score") is not None],key=lambda x:-x["edge_score"]);edge_rank={x["horse"]:i+1 for i,x in enumerate(edge_rows)}
  for x in out:
-  er=edge_rank.get(x["horse"]);edge=x.get("edge_score");flow=x.get("flow_score") or 0
-  if er is None:value=None
+  er=edge_rank.get(x["horse"]);edge=x.get("edge_score");dna=x["dna_score"];flow=x["flow_score"]
+  if er is None:value=max(0.0,min(100.0,45.0+max(0.0,dna-50)*.35))
   else:
-   gap=float(x.get("pop") or er)-float(er)
-   value=max(0.0,min(100.0,50.0+gap*5.0+max(0.0,flow-50.0)*.20-max(0.0,50.0-(edge or 50.0))*.20))
-  x["value_score"]=round(value,1) if value is not None else None
-  parts=[]
-  if edge is not None:parts.append((edge,.65))
-  parts.append((flow,.25 if edge is not None else .80))
-  if value is not None:parts.append((value,.10 if edge is not None else .20))
-  x["scope_score"]=round(sum(v*w for v,w in parts)/sum(w for _,w in parts),1)
-  x["heuristic"]=round(flow,1)
+   rank_gap=float(x.get("pop") or er)-float(er)
+   value=max(0.0,min(100.0,50.0+rank_gap*5.0+max(0.0,dna-55.0)*.18+max(0.0,flow-55.0)*.10-max(0.0,48.0-(edge or 48.0))*.25))
+  x["value_score"]=round(value,1)
+  market_core=.74*dna+.26*flow
+  x["market_core"]=round(market_core,1)
+  if edge is not None:x["scope_score"]=round(.70*market_core+.25*edge+.05*value,1)
+  else:x["scope_score"]=round(.88*market_core+.12*value,1)
+  x["heuristic"]=x["scope_score"]
  return out
 
 def store_learning_samples(key,rs):
@@ -503,17 +591,24 @@ def store_learning_samples(key,rs):
  top=set(rs);now=datetime.now(JST).isoformat();c=con()
  for x in rows:
   c.execute("""INSERT INTO learning_samples
-   (race_key,horse,label,base15,base10,base5,d1,d2,agree,persist,odds15,odds10,odds5,win_flow1,win_flow2,win_move,odds,pop,heuristic,created_at,parser_version)
-   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,persist=EXCLUDED.persist,odds15=EXCLUDED.odds15,odds10=EXCLUDED.odds10,odds5=EXCLUDED.odds5,win_flow1=EXCLUDED.win_flow1,win_flow2=EXCLUDED.win_flow2,win_move=EXCLUDED.win_move,odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version""",
-   (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],x["d1"],x["d2"],x["agree"],x["persist"],
-    x["odds15"],x["odds10"],x["odds5"],x["win_flow1"],x["win_flow2"],x["win_move"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION))
+   (race_key,horse,label,base15,base10,base5,base3,d1,d2,d3,agree,persist,odds15,odds10,odds5,odds3,win_flow1,win_flow2,win_flow3,win_move,odds,pop,heuristic,created_at,parser_version,
+    gap_score,isolation_score,float_score,cross_score,potun_score,accel_score,dna_score,edge_score,scope_score)
+   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+   ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,base3=EXCLUDED.base3,d1=EXCLUDED.d1,d2=EXCLUDED.d2,d3=EXCLUDED.d3,agree=EXCLUDED.agree,persist=EXCLUDED.persist,
+    odds15=EXCLUDED.odds15,odds10=EXCLUDED.odds10,odds5=EXCLUDED.odds5,odds3=EXCLUDED.odds3,win_flow1=EXCLUDED.win_flow1,win_flow2=EXCLUDED.win_flow2,win_flow3=EXCLUDED.win_flow3,win_move=EXCLUDED.win_move,
+    odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version,gap_score=EXCLUDED.gap_score,isolation_score=EXCLUDED.isolation_score,float_score=EXCLUDED.float_score,
+    cross_score=EXCLUDED.cross_score,potun_score=EXCLUDED.potun_score,accel_score=EXCLUDED.accel_score,dna_score=EXCLUDED.dna_score,edge_score=EXCLUDED.edge_score,scope_score=EXCLUDED.scope_score""",
+   (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],x["base3"],x["d1"],x["d2"],x["d3"],x["agree"],x["persist"],
+    x["odds15"],x["odds10"],x["odds5"],x["odds3"],x["win_flow1"],x["win_flow2"],x["win_flow3"],x["win_move"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION,
+    x["gap_score"],x["isolation_score"],x["float_score"],x["cross_score"],x["potun_score"],x["accel_score"],x["dna_score"],x.get("edge_score"),x["scope_score"]))
  c.commit();c.close();return len(rows)
 
 def _vec(r):
- return [float(r["base15"]),float(r["base10"]),float(r["base5"]),float(r["d1"]),float(r["d2"]),
-         float(r["agree"]),float(r["persist"]),float(r.get("win_flow1") or 0),float(r.get("win_flow2") or 0),float(r.get("win_move") or 0),
-         math.log(max(float(r["odds"]),1.0001)),min(float(r["pop"]),18.0)/18.0]
+ edge=float(r.get("edge_score") if r.get("edge_score") is not None else 50.0)
+ return [float(r["base15"]),float(r["base10"]),float(r["base5"]),float(r.get("base3") or 0),float(r["d1"]),float(r["d2"]),float(r.get("d3") or 0),
+         float(r["agree"]),float(r["persist"]),float(r.get("win_flow1") or 0),float(r.get("win_flow2") or 0),float(r.get("win_flow3") or 0),
+         float(r.get("accel_score") or 0),float(r.get("gap_score") or 0),float(r.get("isolation_score") or 0),float(r.get("float_score") or 0),float(r.get("cross_score") or 0),
+         float(r.get("potun_score") or 0),float(r.get("dna_score") or 0),edge,math.log(max(float(r["odds"]),1.0001)),min(float(r["pop"]),18.0)/18.0]
 
 def _fit(train):
  X=[_vec(r) for r in train];y=[int(r["label"]) for r in train];n=len(X);p=len(FEATURES)
@@ -551,9 +646,9 @@ def _top3_metric(rows,score_fn):
 
 def maybe_train():
  c=con()
- rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=6 ORDER BY created_at,race_key,horse").fetchall()]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=8 ORDER BY created_at,race_key,horse").fetchall()]
  races=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at").fetchall()
-        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=6 LIMIT 1",(x["race_key"],)).fetchone()]
+        if c.execute("SELECT 1 FROM learning_samples WHERE race_key=%s AND COALESCE(parser_version,1)>=8 LIMIT 1",(x["race_key"],)).fetchone()]
  state=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
  uniq=[]
  for k in races:
@@ -591,9 +686,7 @@ def model_score(x,state=None):
  s=state if state is not None else get_model_state()
  if s.get("status")!="ACTIVE" or not s.get("weights"):return None
  try:
-  r={"base15":x["base15"],"base10":x["base10"],"base5":x["base5"],"d1":x["d1"],"d2":x["d2"],
-     "agree":x["agree"],"persist":x["persist"],"win_flow1":x.get("win_flow1",0),"win_flow2":x.get("win_flow2",0),"win_move":x.get("win_move",0),
-     "odds":x["odds"],"pop":x["pop"]}
+  r={k:x.get(k) for k in ("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","odds","pop")}
   return _prob(r,json.loads(s["weights"]),json.loads(s["means"]),json.loads(s["stds"]))
  except:return None
 
@@ -614,18 +707,22 @@ def due():
     if not load_profiles(r["race_key"]):
      get_profiles(r);profile_budget-=1;ev.append(f'{r["race_key"]}:PROFILE')
    except Exception as e:ev.append("ERR profile "+str(e))
-  for slot in (15,10,5):
+  for slot in (15,10,5,4,3):
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
    ex=False
    if oldrow:
     try:ex=valid_payload(json.loads(oldrow["payload"]))
     except:ex=False
-   if not ex and slot-2<=mins<=slot+1:
+   if slot==5: in_window=(4.55 < mins <= 5.80)
+   elif slot==4: in_window=(3.55 < mins <= 4.55)
+   elif slot==3: in_window=(1.90 <= mins <= 3.55)
+   else: in_window=(slot-1.25 <= mins <= slot+0.72)
+   if not ex and in_window:
     try:
      data=take(r);c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
       ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
-     if slot==5:save_predictions(r["race_key"])
+     if slot==3:save_predictions(r["race_key"])
     except Exception as e:ev.append("ERR snapshot "+str(e))
   if mins < -3 and not r["result_checked"]:
    try:
@@ -642,7 +739,7 @@ def home():return send_from_directory(".","index.html")
 def reserve():
  try:
   x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"])
-  if (st-datetime.now(JST)).total_seconds()<16*60:return jsonify(ok=False,error="15・10・5分前の3時点取得に必要なため、発走16分前までに予約してください"),409
+  if (st-datetime.now(JST)).total_seconds()<16*60:return jsonify(ok=False,error="15・10・5・3分前の4時点取得に必要なため、発走16分前までに予約してください"),409
   c=con()
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
   ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
@@ -672,6 +769,8 @@ def races():
     if "15" in S:stages["15"]=point_signals(S["15"])
     if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
     if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+    if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
+    if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
     rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
     out.append({**r,"slots":[int(x) for x in S],"stages":stages,"result":result})
    except Exception as e:
@@ -710,11 +809,13 @@ def status():
   if "15" in S:stages["15"]=point_signals(S["15"])
   if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
   if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
-  full=all(k in S for k in ("15","10","5"))
+  if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
+  if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
+  full=all(k in S for k in ("15","10","5","3"))
   features=final_features(key) if full else []
   fm={x["horse"]:x for x in features}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","odds4","odds3","win_flow1","win_flow2","win_flow3","win_move","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","gap_score","isolation_score","float_score","cross_score","potun_score","accel_score","dna_score","market_core","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff")})
    p["strength"]=signal_strength(p)
   result=dict(rs) if rs else None
   if result:
@@ -771,17 +872,29 @@ def profile_refresh():
 @app.route("/api/learning")
 def learning():
  c=con()
- samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=6").fetchone()["n"]
- lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=6").fetchone()["n"]
- n=lraces
- p=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
-              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=4)""").fetchall()
+ samples=c.execute("SELECT COUNT(*) n FROM learning_samples WHERE COALESCE(parser_version,1)>=8").fetchone()["n"]
+ lraces=c.execute("SELECT COUNT(DISTINCT race_key) n FROM learning_samples WHERE COALESCE(parser_version,1)>=8").fetchone()["n"]
+ rows=[dict(x) for x in c.execute("SELECT * FROM learning_samples WHERE COALESCE(parser_version,1)>=8 ORDER BY race_key,horse").fetchall()]
  s=dict(c.execute("SELECT * FROM model_state WHERE id=1").fetchone());c.close()
- total=len(p);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in p)
  by={}
- for x in p:by.setdefault(x["race_key"],[]).append(x)
- signal_races=len(by);race_hit=sum(any(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in rr) for rr in by.values())
- return jsonify(completed_races=n,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),signal_races=signal_races,race_hit_rate=(race_hit/signal_races if signal_races else None),
-  learning_races=lraces,learning_samples=samples,model_status=s["status"],model_version=s["version"],
-  min_train_races=MIN_TRAIN_RACES,min_train_samples=MIN_TRAIN_SAMPLES,
-  heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"])
+ for x in rows:by.setdefault(x["race_key"],[]).append(x)
+ def metric(key,reverse=True):
+  hits=picks=race_hits=0
+  for rr in by.values():
+   valid=[x for x in rr if x.get(key) is not None]
+   if not valid:continue
+   chosen=sorted(valid,key=lambda x:float(x[key]),reverse=reverse)[:3]
+   h=sum(int(x["label"]) for x in chosen);hits+=h;picks+=len(chosen);race_hits+=int(h>0)
+  n=len(by)
+  return {"pick_rate":hits/picks if picks else None,"race_hit_rate":race_hits/n if n else None,"hits":hits,"picks":picks}
+ scope_m=metric("scope_score",True);dna_m=metric("dna_score",True);fav_m=metric("pop",False);edge_m=metric("edge_score",True)
+ # Saved prediction rows are retained for compatibility with the older validation card.
+ c=con();pr=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
+              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=7)""").fetchall();c.close()
+ total=len(pr);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in pr)
+ sigby={}
+ for x in pr:sigby.setdefault(x["race_key"],[]).append(x)
+ signal_races=len(sigby);race_hit=sum(any(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in rr) for rr in sigby.values())
+ return jsonify(completed_races=lraces,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),signal_races=signal_races,race_hit_rate=(race_hit/signal_races if signal_races else None),
+  learning_races=lraces,learning_samples=samples,model_status=s["status"],model_version=s["version"],min_train_races=MIN_TRAIN_RACES,min_train_samples=MIN_TRAIN_SAMPLES,
+  heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"],scope_baseline=scope_m,dna_baseline=dna_m,favorite_baseline=fav_m,edge_baseline=edge_m)

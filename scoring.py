@@ -1,203 +1,42 @@
+"""ODDS SCOPE NAR Ver.11 — scoring helpers.
+
+The live application performs the full calculation in app.py so that market
+snapshots, NAR profiles and validation are evaluated together.  This module
+keeps the public scoring concepts explicit and reusable.
+"""
 import math
-from statistics import mean, pstdev
 
-
-def _safe_float(v, default=None):
-    try:
-        x = float(v)
-        if math.isfinite(x) and x > 0:
-            return x
-    except (TypeError, ValueError):
-        pass
-    return default
-
-
-def _norm(values):
-    """0-100へ正規化。極端な1頭だけで100になるのを少し抑える。"""
-    if not values:
-        return []
-
-    lo = min(values)
-    hi = max(values)
-
-    if hi <= lo:
-        return [50.0 for _ in values]
-
-    return [
-        max(0.0, min(100.0, 100.0 * (v - lo) / (hi - lo)))
-        for v in values
-    ]
-
-
-def popularity_bonus(rank):
-    """
-    人気は主役にしない。
-    4〜9番人気を「参考加点」するだけ。
-    """
-    try:
-        rank = int(rank)
-    except (TypeError, ValueError):
-        return 0.0
-
-    if 4 <= rank <= 9:
-        return 100.0
-    if rank in (3, 10):
-        return 55.0
-    if rank in (2, 11):
-        return 20.0
-
-    return 0.0
-
-
-def odds_move_score(o15, o10, o5):
-    """
-    単勝オッズの時系列。
-    15→10→5分で継続して買われている馬を評価。
-    """
-    o15 = _safe_float(o15)
-    o10 = _safe_float(o10)
-    o5 = _safe_float(o5)
-
-    if not all((o15, o10, o5)):
-        return 0.0
-
-    total_drop = math.log(o15 / o5)
-
-    d1 = math.log(o15 / o10)
-    d2 = math.log(o10 / o5)
-
-    consistency = 0.0
-    if d1 > 0:
-        consistency += 0.5
-    if d2 > 0:
-        consistency += 0.5
-
-    raw = total_drop * 70.0 + consistency * 30.0
-
-    return max(0.0, min(100.0, raw))
-
-
-def frame_distortion_score(actual_odds, expected_odds):
-    """
-    枠連を最重要市場として評価。
-    理論値より実際の枠連オッズが低いほど
-    「その枠が相対的に買われている」と判定。
-    """
-    actual = _safe_float(actual_odds)
-    expected = _safe_float(expected_odds)
-
-    if not actual or not expected:
-        return 0.0
-
-    distortion = math.log(expected / actual)
-
-    return max(0.0, min(100.0, 50.0 + distortion * 65.0))
-
-
-def market_distortion(actual_prob, model_prob):
-    """
-    実際の市場確率と基準モデルとの差。
-    D = ln(P_actual / P_model)
-    """
-    a = _safe_float(actual_prob)
-    m = _safe_float(model_prob)
-
-    if not a or not m:
-        return 0.0
-
-    d = math.log(a / m)
-
-    return max(0.0, min(100.0, 50.0 + d * 55.0))
-
-
-def signal_score(
-    frame_score,
-    win_move,
-    quinella_score=0.0,
-    exacta_score=0.0,
-    trifecta_score=0.0,
-    popularity=None,
-):
-    """
-    ODDS SIGNAL Ver.7 基本配点
-
-    枠連の歪み          35%
-    単勝の時系列変化    25%
-    馬連の歪み          15%
-    馬単の歪み          10%
-    三連単の歪み        10%
-    人気帯              5%
-
-    4〜9番人気は参考加点のみ。
-    大穴・上位人気でも市場の歪みが強ければ候補になる。
-    """
-
-    frame_score = float(frame_score or 0)
-    win_move = float(win_move or 0)
-    quinella_score = float(quinella_score or 0)
-    exacta_score = float(exacta_score or 0)
-    trifecta_score = float(trifecta_score or 0)
-
-    pop = popularity_bonus(popularity)
-
-    score = (
-        frame_score * 0.35
-        + win_move * 0.25
-        + quinella_score * 0.15
-        + exacta_score * 0.10
-        + trifecta_score * 0.10
-        + pop * 0.05
-    )
-
-    return round(max(0.0, min(100.0, score)), 1)
-
-
-def score_horses(horses):
-    """
-    horses:
-    [
-      {
-        "horse_no": 5,
-        "popularity": 6,
-        "frame_score": 82,
-        "win_move": 74,
-        "quinella_score": 65,
-        "exacta_score": 58,
-        "trifecta_score": 61
-      }
-    ]
-
-    戻り値はSIGNALの高い順。
-    """
-
-    result = []
-
-    for h in horses:
-        x = dict(h)
-
-        x["signal"] = signal_score(
-            x.get("frame_score", 0),
-            x.get("win_move", 0),
-            x.get("quinella_score", 0),
-            x.get("exacta_score", 0),
-            x.get("trifecta_score", 0),
-            x.get("popularity"),
-        )
-
-        result.append(x)
-
-    result.sort(key=lambda x: x["signal"], reverse=True)
-
-    return result
-
-
-# ODDS SCOPE NAR Ver.10 hybrid helpers
 FRAME_COLORS={1:"white",2:"black",3:"red",4:"blue",5:"yellow",6:"green",7:"orange",8:"pink"}
+DNA_WEIGHTS={"gap":.12,"isolation":.16,"float":.14,"cross":.18,"potun":.22,"accel":.18}
 
-def performance_score(form=50,distance=50,course=50,pace=50,jockey=50,condition=50):
-    return round(max(0.0,min(100.0,
-        float(form)*.32 + float(distance)*.23 + float(course)*.17 +
-        float(jockey)*.10 + float(condition)*.08 + float(pace)*.10)),1)
+def clamp(v,lo=0.0,hi=100.0):
+    return max(lo,min(hi,float(v)))
 
-def scope_score(market, performance):
-    return round(max(0.0,min(100.0,float(market)*.55+float(performance)*.45)),1)
+def weighted_available(items):
+    vals=[(float(v),float(w)) for v,w in items if v is not None]
+    if not vals:return None
+    return sum(v*w for v,w in vals)/sum(w for _,w in vals)
+
+def odds_dna_score(gap=None,isolation=None,float_score=None,cross=None,potun=None,accel=None):
+    parts=[(gap,DNA_WEIGHTS["gap"]),(isolation,DNA_WEIGHTS["isolation"]),(float_score,DNA_WEIGHTS["float"]),
+           (cross,DNA_WEIGHTS["cross"]),(potun,DNA_WEIGHTS["potun"]),(accel,DNA_WEIGHTS["accel"])]
+    score=weighted_available(parts)
+    return None if score is None else round(clamp(score),1)
+
+def edge_score(form=None,distance=None,course=None,jockey=None,pace=None,condition=None):
+    score=weighted_available([(form,.35),(distance,.20),(course,.15),(jockey,.10),(pace,.10),(condition,.10)])
+    return None if score is None else round(clamp(score),1)
+
+def scope_score(dna,flow,edge=None,value=None):
+    dna=float(dna or 0);flow=float(flow or 0);value=float(value or 0)
+    market=.74*dna+.26*flow
+    if edge is None:return round(clamp(.88*market+.12*value),1)
+    return round(clamp(.70*market+.25*float(edge)+.05*value),1)
+
+def scope_label(scope,dna,flow,edge=None,value=None):
+    scope=float(scope or 0);dna=float(dna or 0);flow=float(flow or 0);value=float(value or 0)
+    if scope>=82 and dna>=80 and flow>=62 and (edge is None or edge>=54):return "HOT"
+    if scope>=75 and dna>=68 and flow>=55 and (edge is None or edge>=50):return "CORE"
+    if value>=70 and dna>=58:return "VALUE"
+    if scope>=64 or dna>=62:return "WATCH"
+    return "NEUTRAL"
