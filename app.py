@@ -180,122 +180,140 @@ DATA_VERSION=6
 
 
 
-PROFILE_VERSION=2
-
-def _rec4(text,label):
- m=re.search(label+r"\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",text)
- return tuple(map(int,m.groups())) if m else (0,0,0,0)
+PROFILE_VERSION=3
 
 def _record_score(rec):
  w,s,t,o=rec;starts=w+s+t+o
- if starts<=0:return 50.0
+ if starts<=0:return None
  raw=100.0*(w+.62*s+.38*t)/starts
- # Shrink tiny samples toward neutral.
  return max(0.0,min(100.0,(raw*starts+50.0*3)/(starts+3)))
 
-def _form_score(finishes):
- if not finishes:return 50.0
- weights=(.36,.25,.18,.13,.08);pts=[]
- for i,f in enumerate(finishes[:5]):
-  # 1st=100, 3rd~67, 5th~45, 10th~15.
-  p=100.0*math.exp(-max(0,int(f)-1)/5.0)
-  pts.append((weights[i],p))
- den=sum(w for w,_ in pts)
- return max(0.0,min(100.0,sum(w*p for w,p in pts)/den if den else 50.0))
+def _place_score(finish,field):
+ try:
+  finish=int(finish);field=int(field)
+  if field<=1:return 50.0
+  return max(0.0,min(100.0,100.0*(field-finish)/(field-1)))
+ except:return None
 
-def _style_from_corners(corners):
- if not corners:return ("不明",50.0)
- lasts=[x[-1] for x in corners if x]
- if not lasts:return ("不明",50.0)
+def _form_score(runs):
+ vals=[];weights=(.40,.30,.20,.10)
+ for i,r in enumerate(runs[:4]):
+  ps=_place_score(r.get("finish"),r.get("field"))
+  if ps is not None:vals.append((weights[i],ps))
+ if not vals:return None
+ return sum(w*v for w,v in vals)/sum(w for w,_ in vals)
+
+def _distance_score(runs,current_distance):
+ if not current_distance:return None
+ vals=[];weights=(.40,.30,.20,.10)
+ for i,r in enumerate(runs[:4]):
+  ps=_place_score(r.get("finish"),r.get("field"));d=r.get("distance")
+  if ps is None or not d:continue
+  close=math.exp(-abs(float(d)-float(current_distance))/350.0)
+  w=weights[i]*max(.18,close)
+  vals.append((w,ps))
+ if not vals:return None
+ return sum(w*v for w,v in vals)/sum(w for w,_ in vals)
+
+def _style_from_runs(runs):
+ lasts=[]
+ for r in runs[:4]:
+  c=r.get("corners") or []
+  if c:lasts.append(c[-1])
+ if not lasts:return ("不明",None)
  a=sum(lasts)/len(lasts)
- if a<=2.7:return ("逃・先",62.0)
- if a<=5.2:return ("先・好位",58.0)
- if a<=8.0:return ("中団",53.0)
- return ("差・追",50.0)
+ if a<=2.7:return ("逃・先",68.0)
+ if a<=5.2:return ("先・好位",61.0)
+ if a<=8.0:return ("中団",55.0)
+ return ("差・追",52.0)
 
-def _condition_score(finishes,body_diff):
- s=50.0
- if len(finishes)>=2:
-  trend=finishes[1]-finishes[0]  # positive means latest finish improved
-  s+=max(-12.0,min(12.0,trend*2.0))
+def _condition_score(runs,body_diff):
+ parts=[]
+ if len(runs)>=2:
+  a=_place_score(runs[0].get("finish"),runs[0].get("field"));b=_place_score(runs[1].get("finish"),runs[1].get("field"))
+  if a is not None and b is not None:parts.append(max(20.0,min(80.0,50.0+(a-b)*.35)))
  if body_diff is not None:
-  d=abs(body_diff)
-  if d>=25:s-=12
-  elif d>=15:s-=6
-  elif d<=8:s+=3
- return max(0.0,min(100.0,s))
+  d=abs(body_diff);parts.append(62.0 if d<=8 else 54.0 if d<=14 else 43.0 if d<=24 else 32.0)
+ if not parts:return None
+ return sum(parts)/len(parts)
 
-def _jockey_info(text):
- # NAR small entry table places current jockey, affiliation and the horse×jockey record together.
- # Example: 600 赤塚健 （ばんえい） 3-2-0-25.
- head=re.split(r"\d{2}\.\d{2}",text,maxsplit=1)[0]
- pats=[
-  r"(?:★|▲|△|☆|◇)?\s*\d{2,3}(?:\.\d)?\s+([^\d\s（）()]{2,12})\s*[（(][^）)]{0,24}[）)]\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)",
-  r"([^\d\s（）()]{2,12})\s*[（(][^）)]{0,24}[）)]\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)"
- ]
- for pat in pats:
-  m=re.search(pat,head)
-  if m:
-   name=m.group(1).strip();rec=tuple(map(int,m.groups()[1:]));return name,rec
- # Safe fallback: before the first past-race date, the first W-S-T-O record is the current jockey/horse record.
- recs=re.findall(r"(?<!\d)(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)(?!\d)",head)
- return "",tuple(map(int,recs[0])) if recs else (0,0,0,0)
+def _find_jockey(text):
+ # Weight is immediately followed by the current jockey on NAR DebaTableSmall.
+ m=re.search(r"(?:★|▲|△|☆|◇)?\s*\d{2,3}(?:\.\d)?\s+([一-龠々ヶァ-ンー]{2,12})\s*[（(][^）)]{0,24}[）)]",text)
+ return m.group(1).strip() if m else ""
 
-def parse_deba(s):
- """Best-effort parser for NAR official DebaTable.
-    Uses only fields actually present on the official entry table. Missing factors stay neutral.
+def _runs_from_text(text):
+ # Official NAR format: venueMM.DD condition direction distance ... finish/field ... time ... corners ...
+ marks=list(re.finditer(r"([一-龠々ヶァ-ンー]{1,10})\s*(\d{2}\.\d{2})\s+",text))
+ runs=[]
+ for i,m in enumerate(marks[:5]):
+  seg=text[m.start():(marks[i+1].start() if i+1<len(marks) else len(text))]
+  md=re.search(r"(?:左|右|直)\s*(\d{3,4})",seg)
+  mf=re.search(r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})(?!\d)",seg)
+  if "出走取消" in seg and not mf:continue
+  corners=[]
+  seqs=re.findall(r"(?<!\d)((?:\d{1,2}-){1,3}\d{1,2})(?!\d)",seg)
+  if seqs:
+   vals=[int(v) for v in seqs[-1].split('-')]
+   if all(1<=v<=18 for v in vals):corners=vals
+  runs.append({"venue":m.group(1),"distance":int(md.group(1)) if md else None,
+               "finish":int(mf.group(1)) if mf else None,"field":int(mf.group(2)) if mf else None,"corners":corners})
+ return runs
+
+def parse_deba(s,race=None):
+ """Parse only values actually printed by NAR DebaTableSmall/DebaTable.
+ Missing values are stored as None and are never displayed as a fake neutral 50.
  """
+ page_text=s.get_text(" ",strip=True)
+ md=re.search(r"(?:ダート|芝)?\s*(\d{3,4})ｍ",page_text)
+ current_distance=int(md.group(1)) if md else None
  out={};last_frame=None
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
   if len(cells)<3:continue
   isint=lambda x:bool(re.fullmatch(r"\d{1,2}",x or ""))
-  frame=horse=None;name=None;offset=0
-  if len(cells)>=3 and isint(cells[0]) and isint(cells[1]):
+  frame=horse=None;name=None
+  if isint(cells[0]) and len(cells)>=2 and isint(cells[1]):
    f,h=int(cells[0]),int(cells[1])
-   if 1<=f<=8 and 1<=h<=18:
-    frame,horse,last_frame=f,h,f;name=cells[2].strip();offset=2
+   if 1<=f<=8 and 1<=h<=18:frame,horse,last_frame=f,h,f;name=cells[2].strip()
   elif isint(cells[0]) and last_frame is not None:
    h=int(cells[0])
-   if 1<=h<=18 and len(cells)>1 and not isint(cells[1]):
-    frame,horse=last_frame,h;name=cells[1].strip();offset=1
+   if 1<=h<=18 and len(cells)>1 and not isint(cells[1]):frame,horse=last_frame,h;name=cells[1].strip()
   if horse is None or not name or len(name)<2:continue
+  # The pedigree cell can contain sire/sex-age/horse/mare. Extract the horse name after sex-age.
+  mn=re.search(r"(?:牡|牝|セン|セ)\s*\d+\s+([^\s]+)",name)
+  if mn:name=mn.group(1).strip()
   text=" ".join(cells)
-  # Guard against accidental subrows.
-  if "全" not in text and "前走" not in text and not re.search(r"\d{2}\.\d{2}\.\d{2}",text):
-   # Still retain basic horse info, but don't let an unrelated row overwrite a richer row.
+  # A real horse row contains current jockey record/body weight and/or past-race dates.
+  rec_matches=list(re.finditer(r"(?<!\d)(\d+)\s*-\s*(\d+)\s*-\s*(\d+)\s*-\s*(\d+)(?!\d)",text))
+  recs=[tuple(map(int,m.groups())) for m in rec_matches]
+  runs=_runs_from_text(text)
+  if not recs and not runs:
    if horse in out:continue
-  overall=_rec4(text,"全");course=_rec4(text,"場");distance=_rec4(text,"距")
-  finishes=[int(x) for x in re.findall(r"(?:^|\s)(\d{1,2})\s+\d{2}\.\d{2}\.\d{2}",text)][:5]
-  corners=[]
-  # Corner order is printed immediately after each race time (e.g. 1:37.3 4-7-5-4).
-  # Anchoring to the time avoids confusing record strings such as 2-1-1-6 with running positions.
-  for m in re.finditer(r"[0-2]:\d{2}\.\d\s+((?:\d{1,2}-){1,3}\d{1,2})",text):
-   vals=[int(v) for v in m.group(1).split("-")]
-   if 2<=len(vals)<=4 and all(1<=v<=18 for v in vals):corners.append(vals)
-  corners=corners[:5]
-  style,style_base=_style_from_corners(corners)
-  bw=None;bd=None
-  mb=re.search(r"(?<!\d)(\d{3})\s*\(([+-]?\d+)\)",text)
-  if mb:bw,bd=int(mb.group(1)),int(mb.group(2))
-  # Current horse×jockey record from the official entry table. Missing data stays neutral internally,
-  # but the UI marks it as unavailable instead of pretending that 50 is a measured score.
-  jockey,jrec=_jockey_info(text)
-  jockey_has_data=sum(jrec)>0
-  jockey_score=_record_score(jrec) if jockey_has_data else 50.0
-  if not jockey:
-   staff=cells[offset+1] if len(cells)>offset+1 else ""
-   staff_parts=[x for x in re.split(r"\s+",staff) if x]
-   jockey=staff_parts[0] if staff_parts else ""
-  form=_form_score(finishes)
-  dist=_record_score(distance);crs=_record_score(course)
-  cond=_condition_score(finishes,bd)
+  jockey=_find_jockey(text)
+  jrec=recs[0] if recs else (0,0,0,0)
+  # Printed order after jockey record: overall / left / right / current venue.
+  overall=recs[1] if len(recs)>1 else (0,0,0,0)
+  left_rec=recs[2] if len(recs)>2 else (0,0,0,0)
+  right_rec=recs[3] if len(recs)>3 else (0,0,0,0)
+  course=recs[4] if len(recs)>4 else (0,0,0,0)
+  bw=bd=None
+  if rec_matches:
+   tail=text[rec_matches[0].end():rec_matches[0].end()+30]
+   mb=re.search(r"(?<!\d)(\d{3})\s+([+-]?\d+)(?!\d)",tail)
+   if mb:bw,bd=int(mb.group(1)),int(mb.group(2))
+  style,style_base=_style_from_runs(runs)
+  form=_form_score(runs);dist=_distance_score(runs,current_distance);crs=_record_score(course)
+  jockey_score=_record_score(jrec);cond=_condition_score(runs,bd)
   out[horse]={"profile_version":PROFILE_VERSION,"frame":frame,"horse":horse,"name":name,
-   "jockey":jockey,"overall_record":overall,"course_record":course,"distance_record":distance,
-   "recent_finishes":finishes,"corners":corners,"style":style,"style_base":round(style_base,1),
-   "body_weight":bw,"body_diff":bd,"form_score":round(form,1),"distance_score":round(dist,1),
-   "course_score":round(crs,1),"jockey_score":round(jockey_score,1),"jockey_record":list(jrec),
-   "jockey_has_data":jockey_has_data,"condition_score":round(cond,1)}
+   "jockey":jockey,"jockey_record":list(jrec),"jockey_has_data":jockey_score is not None,
+   "overall_record":list(overall),"left_record":list(left_rec),"right_record":list(right_rec),"course_record":list(course),
+   "recent_runs":runs,"recent_finishes":[x.get("finish") for x in runs if x.get("finish") is not None],
+   "style":style,"style_base":round(style_base,1) if style_base is not None else None,
+   "body_weight":bw,"body_diff":bd,"form_score":round(form,1) if form is not None else None,
+   "distance_score":round(dist,1) if dist is not None else None,"course_score":round(crs,1) if crs is not None else None,
+   "jockey_score":round(jockey_score,1) if jockey_score is not None else None,
+   "condition_score":round(cond,1) if cond is not None else None,"current_distance":current_distance}
  return out
 
 def load_profiles(key):
@@ -315,7 +333,7 @@ def get_profiles(r,force=False):
   prof={}
   for path in ("DebaTableSmall","DebaTable"):
    try:
-    prof=parse_deba(soup(path,qfor(r)))
+    prof=parse_deba(soup(path,qfor(r)),r)
     if prof:break
    except Exception:
     prof={}
@@ -333,7 +351,7 @@ def _pace_fit(style,front_count):
  if style=="先・好位":return 64.0 if front_count<=3 else 70.0
  if style=="中団":return 56.0 if front_count<=3 else 64.0
  if style=="差・追":return 48.0 if front_count<=2 else (60.0 if front_count==3 else 70.0)
- return 50.0
+ return None
 
 def take(r):
  q=qfor(r);W=win(soup("OddsTanFuku",q));Q=combo(soup("OddsUmLenFuku",q),2);E=combo(soup("OddsUmLenTan",q),2);T=combo(soup("Odds3LenTan",q),3)
@@ -378,21 +396,19 @@ def rank_features(A,model_state=None):
  out=[];state=model_state if model_state is not None else get_model_state()
  for src in A:
   x=dict(src);lp=model_score(x,state)
-  learned_market=(lp if lp is not None else x["market_score"]/100.0)
-  rank_score=.55*learned_market+.45*(x["performance_score"]/100.0)
-  x["learned_prob"]=lp;x["rank_score"]=rank_score;x["score"]=x["scope_score"]
+  x["learned_prob"]=lp;x["rank_score"]=float(x.get("scope_score") or 0)/100.0;x["score"]=x.get("scope_score") or 0
   out.append(x)
- return sorted(out,key=lambda x:(-x["rank_score"],x["pop"]))
+ return sorted(out,key=lambda x:(-x["rank_score"],x.get("pop",99)))
 
 def predictions(key,model_state=None):
  return rank_features(final_features(key),model_state)
 
 def scope_label(x):
- total=float(x.get("scope_score") or x.get("score") or 0);market=float(x.get("market_score") or 0);perf=float(x.get("performance_score") or 0)
- flow=float(x.get("win_flow_pct") or 0);move=float(x.get("win_move_score") or 0)
- if total>=74 and market>=60 and perf>=58 and (flow>=8 or move>=18):return "CORE"
- if total>=66 and market>=55 and perf>=48 and (flow>=5 or move>=12):return "VALUE"
- if total>=58 and market>=45:return "WATCH"
+ total=float(x.get("scope_score") or 0);flow=float(x.get("flow_score") or x.get("market_score") or 0)
+ edge=x.get("edge_score");conf=float(x.get("data_confidence") or 0)
+ if edge is not None and total>=76 and edge>=66 and flow>=55 and conf>=55:return "CORE"
+ if edge is not None and total>=68 and edge>=58 and flow>=48:return "VALUE"
+ if total>=60 and flow>=45:return "WATCH"
  return "NO SIGNAL"
 
 def adaptive_candidates(A):
@@ -416,6 +432,11 @@ def _sigmoid(z):
  z=max(-35.0,min(35.0,z))
  return 1.0/(1.0+math.exp(-z))
 
+def _weighted_available(items):
+ vals=[(float(v),float(w)) for v,w in items if v is not None]
+ if not vals:return None,0.0
+ return sum(v*w for v,w in vals)/sum(w for _,w in vals),100.0*sum(w for _,w in vals)/sum(w for _,w in items)
+
 def final_features(key):
  c=con();ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();c.close()
  S={str(x["slot"]):json.loads(x["payload"]) for x in ss};S={k:v for k,v in S.items() if valid_payload(v)}
@@ -423,7 +444,7 @@ def final_features(key):
  def mp(k):return {str(x["horse"]):x for x in S[k].get("rows",[])}
  a,b,z=mp("15"),mp("10"),mp("5");raw=[]
  profiles=load_profiles(key)
- front_count=sum(1 for p in profiles.values() if p.get("style")=="逃・先")
+ front_count=sum(1 for p in profiles.values() if p.get("style") in ("逃・先","先・好位"))
  for h,x in z.items():
   if h not in a or h not in b:continue
   d1=b[h]["base"]-a[h]["base"];d2=x["base"]-b[h]["base"]
@@ -445,20 +466,35 @@ def final_features(key):
   persist2=.60*r["persist"]+.40*win_persist
   rel=float(r.get("reliability",tail_reliability(r["pop"],r["odds"])))
   rawh=100*(.30*level+.20*accel+.30*win_signal+.10*r["agree"]+.10*persist2)
-  market_score=max(0,min(100,round(rawh*rel)))
+  flow_score=max(0,min(100,round(rawh*rel)))
   flow_pct=((r["odds15"]/r["odds5"])-1.0)*100 if r["odds5"]>0 else 0.0
   p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count)
-  form=float(p.get("form_score",50));dist=float(p.get("distance_score",50));course=float(p.get("course_score",50))
-  jockey=float(p.get("jockey_score",50));cond=float(p.get("condition_score",50))
-  performance=.32*form+.23*dist+.17*course+.10*jockey+.08*cond+.10*pace_fit
-  scope=.55*market_score+.45*performance
-  out.append({**r,"persist":persist2,"reliability":rel,"market_score":round(market_score,1),
-              "performance_score":round(performance,1),"scope_score":round(scope,1),"heuristic":round(market_score,1),
-              "win_move_z":wzr,"win_move_score":round(100*win_signal),"win_flow_pct":flow_pct,
-              "form_score":round(form,1),"distance_score":round(dist,1),"course_score":round(course,1),
-              "jockey_score":round(jockey,1),"jockey_record":p.get("jockey_record",[0,0,0,0]),
-              "jockey_has_data":bool(p.get("jockey_has_data",False)),"condition_score":round(cond,1),"pace_score":round(pace_fit,1),
-              "style":style,"frame":p.get("frame"),"name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey","")})
+  form=p.get("form_score");dist=p.get("distance_score");course=p.get("course_score");jockey=p.get("jockey_score");cond=p.get("condition_score")
+  edge,conf=_weighted_available([(form,.35),(dist,.20),(course,.15),(jockey,.10),(pace_fit,.10),(cond,.10)])
+  out.append({**r,"persist":persist2,"reliability":rel,"flow_score":round(flow_score,1),"market_score":round(flow_score,1),
+              "edge_score":round(edge,1) if edge is not None else None,"performance_score":round(edge,1) if edge is not None else None,
+              "data_confidence":round(conf,1),"win_move_z":wzr,"win_move_score":round(100*win_signal),"win_flow_pct":flow_pct,
+              "form_score":form,"distance_score":dist,"course_score":course,"jockey_score":jockey,
+              "jockey_record":p.get("jockey_record",[0,0,0,0]),"jockey_has_data":bool(p.get("jockey_has_data",False)),
+              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,
+              "style":style,"frame":p.get("frame"),"name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey",""),
+              "recent_finishes":p.get("recent_finishes",[]),"body_weight":p.get("body_weight"),"body_diff":p.get("body_diff")})
+ # VALUE = ability rank versus market popularity, with a small positive-flow confirmation.
+ edge_rows=sorted([x for x in out if x.get("edge_score") is not None],key=lambda x:-x["edge_score"])
+ edge_rank={x["horse"]:i+1 for i,x in enumerate(edge_rows)}
+ for x in out:
+  er=edge_rank.get(x["horse"]);edge=x.get("edge_score");flow=x.get("flow_score") or 0
+  if er is None:value=None
+  else:
+   gap=float(x.get("pop") or er)-float(er)
+   value=max(0.0,min(100.0,50.0+gap*5.0+max(0.0,flow-50.0)*.20-max(0.0,50.0-(edge or 50.0))*.20))
+  x["value_score"]=round(value,1) if value is not None else None
+  parts=[]
+  if edge is not None:parts.append((edge,.65))
+  parts.append((flow,.25 if edge is not None else .80))
+  if value is not None:parts.append((value,.10 if edge is not None else .20))
+  x["scope_score"]=round(sum(v*w for v,w in parts)/sum(w for _,w in parts),1)
+  x["heuristic"]=round(flow,1)
  return out
 
 def store_learning_samples(key,rs):
@@ -678,7 +714,7 @@ def status():
   features=final_features(key) if full else []
   fm={x["horse"]:x for x in features}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","performance_score","scope_score","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","win_flow1","win_flow2","win_move","win_move_score","win_flow_pct","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff")})
    p["strength"]=signal_strength(p)
   result=dict(rs) if rs else None
   if result:
@@ -687,7 +723,17 @@ def status():
   state=get_model_state() if full else {}
   rankings=rank_features(features,state) if full else []
   profile_ready=any(x.get("name") and x.get("frame") for x in features) if full else bool(load_profiles(key))
-  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=pp,rankings=rankings,result=result,profile_ready=profile_ready)
+  display_predictions=[]
+  if rankings:
+   selected=[]
+   if rankings:selected.append(rankings[0])
+   if len(rankings)>1:selected.append(rankings[1])
+   mid=next((x for x in rankings if 4<=int(x.get("pop") or 99)<=9 and x not in selected),None)
+   if mid:selected.append(mid)
+   elif len(rankings)>2:selected.append(next((x for x in rankings if x not in selected),rankings[2]))
+   for i,x in enumerate(selected[:3],1):
+    y=dict(x);y["rank"]=i;y["strength"]=scope_label(y);display_predictions.append(y)
+  return jsonify(race=dict(r) if r else None,snaps=S,stages=stages,predictions=display_predictions,rankings=rankings,result=result,profile_ready=profile_ready)
  except Exception as e:
   try:c.close()
   except Exception:pass
