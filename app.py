@@ -862,13 +862,21 @@ def home():return send_from_directory(".","index.html")
 def reserve():
  try:
   x=request.get_json(force=True);key=f'{x["date"]}:{x["baba"]}:{int(x["race"])}';st=datetime.fromisoformat(x["start_iso"])
-  if (st-datetime.now(JST)).total_seconds()<16*60:return jsonify(ok=False,error="15分前から監視を開始するため、発走16分前までに予約してください"),409
+  mins_left=(st-datetime.now(JST)).total_seconds()/60.0
+  if mins_left<3.0:
+   return jsonify(ok=False,error="発走3分前を切っているため新規予約できません。3分以上前に予約してください"),409
+  # Late reservations are allowed. Start from the earliest snapshot window that is still realistically reachable.
+  if mins_left>=13.75:start_stage=15
+  elif mins_left>8.90:start_stage=10
+  elif mins_left>4.35:start_stage=5
+  elif mins_left>3.35:start_stage=4
+  else:start_stage=3
   c=con()
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
   ON CONFLICT(race_key) DO UPDATE SET start_iso=excluded.start_iso,baba_name=excluded.baba_name,status='reserved',result_checked=0""",(key,x["date"],str(x["baba"]),x["baba_name"],int(x["race"]),st.isoformat(),"reserved",datetime.now(JST).isoformat()))
   c.commit();c.close()
-  # Return immediately. Official entry-table profiles are prefetched by /api/tick so reservation does not block on NAR.
-  return jsonify(ok=True,race_key=key,profile_status="queued")
+  # Return immediately. The browser triggers /api/tick once after reservation, while cron remains the durable fallback.
+  return jsonify(ok=True,race_key=key,profile_status="queued",start_stage=start_stage,minutes_left=round(mins_left,1))
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/races")
 def races():
