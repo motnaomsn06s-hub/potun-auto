@@ -485,10 +485,30 @@ def _model_blend_weight(state):
   return round(min(.40,.25+.10*maturity+min(.05,gain*1.5)),3)
  except Exception:return 0.0
 
+def _signal_profile(x,score=None):
+ # Result-oriented signal calibration. SCOPE ranks horses; SIGNAL LEVEL measures how much evidence is aligned.
+ scope=float(score if score is not None else (x.get("adaptive_score") if x.get("adaptive_score") is not None else x.get("scope_score") or 0))
+ dna=float(x.get("dna_score") or 0);flow=float(x.get("flow_score") or 0);accel=float(x.get("accel_score") or 0)
+ pot=float(x.get("potun_score") or 0);cross=float(x.get("cross_score") or 0)
+ edge=x.get("edge_score");edgev=float(edge) if edge is not None else 50.0
+ conf=float(x.get("data_confidence") or 0);pop=int(x.get("pop") or 99)
+ confirmations=sum((dna>=58,flow>=58,accel>=65,pot>=60,cross>=65,(edge is not None and edgev>=58)))
+ idx=.34*scope+.15*dna+.14*flow+.12*accel+.09*pot+.08*cross+.08*edgev
+ idx+=max(0,confirmations-1)*2.0
+ if pop>=7 and confirmations<2:idx-=4.0
+ if pop>=10 and confirmations<3:idx-=2.0
+ if pop<=3 and edge is not None and edgev>=58 and flow>=40:idx+=2.5
+ if conf<50:idx-=4.0
+ idx=max(0.0,min(100.0,idx))
+ if idx>=72 and confirmations>=3:grade,label="S","PRIME"
+ elif idx>=62 and confirmations>=2:grade,label="A","STRONG"
+ elif idx>=53:grade,label="B","SELECT"
+ elif idx>=44:grade,label="C","WATCH"
+ else:grade,label="D","LOW"
+ return {"signal_index":round(idx,1),"signal_grade":grade,"signal_label":label,"confirmations":int(confirmations)}
+
 def rank_features(A,model_state=None):
  state=model_state if model_state is not None else get_model_state();out=[]
- # First calculate model probabilities for every horse so they can be normalized
- # within the race. This avoids mixing an absolute probability scale directly with SCOPE.
  tmp=[]
  for src in A:
   x=dict(src);x["learned_prob"]=model_score(x,state);tmp.append(x)
@@ -499,33 +519,38 @@ def rank_features(A,model_state=None):
   base=max(0.0,min(1.0,float(x.get("scope_score") or 0)/100.0))
   lp=x.get("learned_prob")
   if w>0 and lp is not None and sd>1e-9:
-   z=max(-3.0,min(3.0,(float(lp)-mu)/sd))
-   model_signal=1.0/(1.0+math.exp(-1.15*z))
-   final=(1.0-w)*base+w*model_signal
-  else:
-   model_signal=None;final=base
-  x["model_signal"]=None if model_signal is None else round(model_signal*100,1)
-  x["model_weight"]=round(w*100,1)
-  x["adaptive_score"]=round(final*100,1)
-  x["rank_score"]=final;x["score"]=x["adaptive_score"];x["strength"]=scope_label(x)
+   z=max(-3.0,min(3.0,(float(lp)-mu)/sd));model_signal=1.0/(1.0+math.exp(-1.15*z));final=(1.0-w)*base+w*model_signal
+  else:model_signal=None;final=base
+  x["model_signal"]=None if model_signal is None else round(model_signal*100,1);x["model_weight"]=round(w*100,1)
+  provisional=round(final*100,1);prof=_signal_profile(x,provisional);pop=int(x.get("pop") or 99);edge=x.get("edge_score");flow=float(x.get("flow_score") or 0)
+  adjust=0.0
+  if pop>=7 and prof["confirmations"]<2:adjust-=4.0
+  elif pop>=7 and prof["confirmations"]==2:adjust-=1.5
+  if pop<=3 and edge is not None and float(edge)>=58 and flow>=40:adjust+=2.0
+  final=max(0.0,min(1.0,(provisional+adjust)/100.0))
+  x["adaptive_score"]=round(final*100,1);x.update(_signal_profile(x,x["adaptive_score"]))
+  x["rank_score"]=final;x["score"]=x["adaptive_score"];x["strength"]=f'{x["signal_grade"]} {x["signal_label"]}'
   out.append(x)
- return sorted(out,key=lambda x:(-x["rank_score"],-float(x.get("scope_score") or 0),x.get("pop",99)))
+ return sorted(out,key=lambda x:(-x["rank_score"],-float(x.get("signal_index") or 0),-float(x.get("scope_score") or 0),x.get("pop",99)))
 
 def predictions(key,model_state=None):
  return rank_features(final_features(key),model_state)
 
 def scope_label(x):
- scope=float(x.get("adaptive_score") if x.get("adaptive_score") is not None else x.get("scope_score") or 0);dna=float(x.get("dna_score") or 0);flow=float(x.get("flow_score") or 0)
- edge=x.get("edge_score");conf=float(x.get("data_confidence") or 0)
- if scope>=82 and dna>=80 and flow>=62 and (edge is None or edge>=54):return "HOT"
- if scope>=75 and dna>=68 and flow>=55 and (edge is None or edge>=50):return "CORE"
- if (x.get("value_score") or 0)>=70 and dna>=58:return "VALUE"
- if scope>=64 or dna>=62:return "WATCH"
- return "NEUTRAL"
+ prof=_signal_profile(x)
+ return f'{prof["signal_grade"]} {prof["signal_label"]}'
+
+def race_signal_summary(A):
+ if not A:return {"grade":"D","label":"LOW SIGNAL","note":"有効な候補データ待ち","qualified":0,"top_index":0,"spread":0}
+ grade_order={"S":5,"A":4,"B":3,"C":2,"D":1};top=A[0];g=top.get("signal_grade") or "D";second=A[1] if len(A)>1 else None
+ spread=float(top.get("adaptive_score") or 0)-float(second.get("adaptive_score") or 0) if second else 0.0
+ qualified=sum(1 for x in A[:5] if grade_order.get(x.get("signal_grade","D"),1)>=3)
+ meta={"S":("PRIME SIGNAL","複数指標が高水準で一致"),"A":("STRONG SIGNAL","有力シグナル。複数の裏付けあり"),"B":("SELECT SIGNAL","候補として注視する水準"),"C":("WATCH","シグナルは限定的。順位は参考"),"D":("LOW SIGNAL","明確なシグナルなし")}
+ label,note=meta.get(g,meta["D"])
+ return {"grade":g,"label":label,"note":note,"qualified":qualified,"top_index":round(float(top.get("signal_index") or 0),1),"spread":round(spread,1)}
 
 def adaptive_candidates(A):
- # Always keep a visible ranking. Signal label tells the user whether the top horse is truly hot.
- return A[:3],None
+ return A[:3],race_signal_summary(A)
 
 def save_predictions(key,slot=3):
  # Persist the latest top-3 for validation at each stage. The UI can show a wider candidate pool
@@ -757,14 +782,16 @@ def _prob(r,w,means,stds):
  for j in range(len(FEATURES)):z+=w[j+1]*((x[j]-means[j])/stds[j])
  return _sigmoid(z)
 
-def _top3_metric(rows,score_fn):
+def _rank_metrics(rows,score_fn):
  by={}
  for r in rows:by.setdefault(r["race_key"],[]).append(r)
- hits=0;total=0
+ hits=total=race_hits=top1_hits=perfect=0
  for rr in by.values():
   pick=sorted(rr,key=score_fn,reverse=True)[:3]
-  hits+=sum(int(x["label"]) for x in pick);total+=len(pick)
- return hits/total if total else 0.0
+  if not pick:continue
+  h=sum(int(x["label"]) for x in pick);hits+=h;total+=len(pick);race_hits+=int(h>0);top1_hits+=int(pick[0]["label"]);perfect+=int(h>=3)
+ n=len(by)
+ return {"capture":hits/total if total else 0.0,"race_hit":race_hits/n if n else 0.0,"top1_place":top1_hits/n if n else 0.0,"perfect3":perfect/n if n else 0.0,"races":n}
 
 def maybe_train():
  c=con()
@@ -783,19 +810,21 @@ def maybe_train():
  train=[r for r in rows if r["race_key"] in train_keys];val=[r for r in rows if r["race_key"] in val_keys]
  if len(val)<12:return {"status":"COLLECTING","races":len(uniq),"samples":len(rows)}
  w,mn,sd=_fit(train)
- h=_top3_metric(val,lambda r:float(r["heuristic"]))
- l=_top3_metric(val,lambda r:_prob(r,w,mn,sd))
- oldv=int(state.get("version") or 0)
- # Adopt only when learned ranking beats heuristic on chronological holdout.
- if l>h:
+ hm=_rank_metrics(val,lambda r:float(r["heuristic"]))
+ lm=_rank_metrics(val,lambda r:_prob(r,w,mn,sd))
+ h=hm["capture"];l=lm["capture"];oldv=int(state.get("version") or 0)
+ # Result-first adoption: require a meaningful capture improvement and do not allow
+ # top-pick or race-hit quality to deteriorate materially on chronological holdout.
+ adopt=(l>=h+.015 and lm["top1_place"]>=hm["top1_place"]-.02 and lm["race_hit"]>=hm["race_hit"]-.01)
+ if adopt:
   version=oldv+1
   c=con();c.execute("""UPDATE model_state SET version=%s,status='ACTIVE',trained_races=%s,trained_samples=%s,
    weights=%s,means=%s,stds=%s,heuristic_val=%s,learned_val=%s,updated_at=%s WHERE id=1""",
    (version,len(uniq),len(rows),json.dumps(w),json.dumps(mn),json.dumps(sd),h,l,datetime.now(JST).isoformat()))
-  c.commit();c.close();return {"status":"ACTIVE","version":version,"heuristic_val":h,"learned_val":l}
+  c.commit();c.close();return {"status":"ACTIVE","version":version,"heuristic_val":h,"learned_val":l,"heuristic_metrics":hm,"learned_metrics":lm}
  c=con();c.execute("""UPDATE model_state SET status=%s,trained_races=%s,trained_samples=%s,heuristic_val=%s,learned_val=%s,updated_at=%s WHERE id=1""",
   ("KEEP_HEURISTIC",len(uniq),len(rows),h,l,datetime.now(JST).isoformat()));c.commit();c.close()
- return {"status":"KEEP_HEURISTIC","version":oldv,"heuristic_val":h,"learned_val":l}
+ return {"status":"KEEP_HEURISTIC","version":oldv,"heuristic_val":h,"learned_val":l,"heuristic_metrics":hm,"learned_metrics":lm}
 
 def get_model_state():
  try:
@@ -958,12 +987,22 @@ def status():
   rankings=rank_features(features,rank_state) if features else []
   fm={x["horse"]:x for x in rankings}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","odds4","odds3","win_flow1","win_flow2","win_flow3","win_move","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","gap_score","isolation_score","float_score","cross_score","potun_score","accel_score","dna_score","market_core","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff","adaptive_score","learned_prob","model_signal","model_weight","phase_slot")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","odds4","odds3","win_flow1","win_flow2","win_flow3","win_move","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","gap_score","isolation_score","float_score","cross_score","potun_score","accel_score","dna_score","market_core","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff","adaptive_score","learned_prob","model_signal","model_weight","phase_slot","signal_index","signal_grade","signal_label","confirmations")})
    p["strength"]=signal_strength(p)
   result=dict(rs) if rs else None
+  result_eval=None
   if result:
    places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
    for p in pp:p["finish"]=places.get(p["horse"],0)
+   delivered=sorted(pp,key=lambda z:int(z.get("rank") or 99))[:3]
+   hits=[int(z["horse"]) for z in delivered if int(z["horse"]) in places]
+   top1_place=bool(delivered and int(delivered[0]["horse"]) in places)
+   hit_count=len(hits)
+   if hit_count==3:result_grade,result_label="A","3/3 CAPTURE"
+   elif hit_count==2:result_grade,result_label="B","2/3 CAPTURE"
+   elif hit_count==1:result_grade,result_label="C","1/3 CAPTURE"
+   else:result_grade,result_label="D","0/3"
+   result_eval={"picks":[int(z["horse"]) for z in delivered],"hits":hits,"hit_count":hit_count,"top1_place":top1_place,"perfect3":hit_count==3,"grade":result_grade,"label":result_label}
   profile_ready=any(x.get("name") and x.get("frame") for x in features) if features else bool(load_profiles(key))
   display_predictions=[]
   if rankings:
@@ -1003,7 +1042,8 @@ def status():
   legacy={"active":legacy_active,"slots":sorted([int(k) for k in RAW]),"latest_slot":int(latest_key) if latest_key else None,
           "predictions":legacy_predictions,"market_rows":legacy_market,
           "note":"旧版保存データを表示中。Ver.11 ODDS DNAの再計算・学習には使用しません。"}
-  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  race_signal=race_signal_summary(rankings)
+  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,race_signal=race_signal,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
@@ -1057,13 +1097,46 @@ def learning():
   n=len(by)
   return {"pick_rate":hits/picks if picks else None,"race_hit_rate":race_hits/n if n else None,"hits":hits,"picks":picks}
  scope_m=metric("scope_score",True);dna_m=metric("dna_score",True);fav_m=metric("pop",False);edge_m=metric("edge_score",True)
- # Saved prediction rows are retained for compatibility with the older validation card.
- c=con();pr=c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key)
-              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=7)""").fetchall();c.close()
- total=len(pr);hit=sum(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in pr)
- sigby={}
- for x in pr:sigby.setdefault(x["race_key"],[]).append(x)
- signal_races=len(sigby);race_hit=sum(any(x["horse"] in (x["first_horse"],x["second_horse"],x["third_horse"]) for x in rr) for rr in sigby.values())
- return jsonify(completed_races=lraces,predictions=total,top3_hits=hit,top3_rate=(hit/total if total else None),signal_races=signal_races,race_hit_rate=(race_hit/signal_races if signal_races else None),
+ # Delivered FINAL picks: evaluate what the user actually saw, not a hindsight recomputation.
+ c=con();pr=[dict(x) for x in c.execute("""SELECT p.*,r.first_horse,r.second_horse,r.third_horse,r.fetched_at AS result_at FROM predictions p JOIN results r USING(race_key)
+              WHERE EXISTS(SELECT 1 FROM learning_samples l WHERE l.race_key=p.race_key AND COALESCE(l.parser_version,1)>=8) ORDER BY r.fetched_at,p.rank""").fetchall()];c.close()
+ def delivered_metrics(items):
+  bb={}
+  for x in items:bb.setdefault(x["race_key"],[]).append(x)
+  hits=picks=race_hits=top1_hits=perfect=0
+  for rr in bb.values():
+   rr=sorted(rr,key=lambda z:int(z.get("rank") or 99))[:3]
+   if not rr:continue
+   finish={int(rr[0]["first_horse"]),int(rr[0]["second_horse"]),int(rr[0]["third_horse"])}
+   h=sum(int(int(z["horse"]) in finish) for z in rr);hits+=h;picks+=len(rr);race_hits+=int(h>0);top1_hits+=int(int(rr[0]["horse"]) in finish);perfect+=int(h==3)
+  n=len(bb)
+  return {"races":n,"pick_rate":hits/picks if picks else None,"race_hit_rate":race_hits/n if n else None,"top1_place_rate":top1_hits/n if n else None,"perfect3_rate":perfect/n if n else None,"hits":hits,"picks":picks}
+ delivered_all=delivered_metrics(pr)
+ keys_order=[]
+ for x in pr:
+  if x["race_key"] not in keys_order:keys_order.append(x["race_key"])
+ recent_keys=set(keys_order[-30:]);recent_pr=[x for x in pr if x["race_key"] in recent_keys];recent_delivered=delivered_metrics(recent_pr)
+ recent_rows=[x for x in rows if x["race_key"] in recent_keys]
+ def recent_baseline(key,reverse=True):
+  bb={}
+  for x in recent_rows:bb.setdefault(x["race_key"],[]).append(x)
+  hits=picks=race_hits=top1_hits=0
+  for rr in bb.values():
+   valid=[x for x in rr if x.get(key) is not None]
+   if not valid:continue
+   chosen=sorted(valid,key=lambda x:float(x[key]),reverse=reverse)[:3];h=sum(int(x["label"]) for x in chosen)
+   hits+=h;picks+=len(chosen);race_hits+=int(h>0);top1_hits+=int(chosen and chosen[0]["label"])
+  n=len(bb)
+  return {"races":n,"pick_rate":hits/picks if picks else None,"race_hit_rate":race_hits/n if n else None,"top1_place_rate":top1_hits/n if n else None}
+ recent_fav=recent_baseline("pop",False)
+ if recent_delivered["races"]<30:system_status="COLLECTING"
+ else:
+  dc=recent_delivered.get("pick_rate") or 0;fc=recent_fav.get("pick_rate") or 0;dr=recent_delivered.get("race_hit_rate") or 0;fr=recent_fav.get("race_hit_rate") or 0
+  if dc>=fc+.02 and dr>=fr-.02:system_status="PASS"
+  elif dc>=fc-.02:system_status="HOLD"
+  else:system_status="REVIEW"
+ total=len(pr);hit=delivered_all["hits"];signal_races=delivered_all["races"];race_hit=(delivered_all["race_hit_rate"] or 0)*signal_races
+ return jsonify(completed_races=lraces,predictions=total,top3_hits=hit,top3_rate=delivered_all["pick_rate"],signal_races=signal_races,race_hit_rate=delivered_all["race_hit_rate"],
+  top1_place_rate=delivered_all["top1_place_rate"],perfect3_rate=delivered_all["perfect3_rate"],recent_performance=recent_delivered,recent_favorite=recent_fav,system_status=system_status,
   learning_races=lraces,learning_samples=samples,model_status=s["status"],model_version=s["version"],min_train_races=MIN_TRAIN_RACES,min_train_samples=MIN_TRAIN_SAMPLES,
   heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"],model_blend_weight=_model_blend_weight(s),scope_baseline=scope_m,dna_baseline=dna_m,favorite_baseline=fav_m,edge_baseline=edge_m)
