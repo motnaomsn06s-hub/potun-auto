@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/11.4)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/13.0)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -52,7 +52,7 @@ def init():
  for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),("odds3","DOUBLE PRECISION"),
                  ("base3","DOUBLE PRECISION"),("d3","DOUBLE PRECISION"),("win_flow1","DOUBLE PRECISION"),("win_flow2","DOUBLE PRECISION"),("win_flow3","DOUBLE PRECISION"),("win_move","DOUBLE PRECISION"),
                  ("gap_score","DOUBLE PRECISION"),("isolation_score","DOUBLE PRECISION"),("float_score","DOUBLE PRECISION"),("cross_score","DOUBLE PRECISION"),("potun_score","DOUBLE PRECISION"),("accel_score","DOUBLE PRECISION"),
-                 ("dna_score","DOUBLE PRECISION"),("edge_score","DOUBLE PRECISION"),("scope_score","DOUBLE PRECISION")):
+                 ("dna_score","DOUBLE PRECISION"),("edge_score","DOUBLE PRECISION"),("race_flow_score","DOUBLE PRECISION"),("scope_score","DOUBLE PRECISION")):
   try:
    c.execute(f"ALTER TABLE learning_samples ADD COLUMN {col} {typ}");c.commit()
   except Exception:c.rollback()
@@ -61,6 +61,12 @@ def init():
  if not done:
   c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
   c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v11_1_late_accel','1') ON CONFLICT(k) DO UPDATE SET v='1'")
+ c.commit();c.close()
+ # Ver.13 adds RACE FLOW as a learning feature. Reset only the fitted model; keep historical samples/results.
+ c=con();done=c.execute("SELECT v FROM app_meta WHERE k='analysis_v13_race_flow'").fetchone()
+ if not done:
+  c.execute("UPDATE model_state SET status='COLLECTING',trained_races=0,trained_samples=0,weights=NULL,means=NULL,stds=NULL,heuristic_val=NULL,learned_val=NULL,updated_at=%s WHERE id=1",(datetime.now(JST).isoformat(),))
+  c.execute("INSERT INTO app_meta(k,v) VALUES('analysis_v13_race_flow','1') ON CONFLICT(k) DO UPDATE SET v='1'")
  c.commit();c.close()
 init()
 
@@ -428,6 +434,55 @@ def _pace_fit(style,front_count):
  if style=="差・追":return 48.0 if front_count<=2 else (60.0 if front_count==3 else 70.0)
  return None
 
+def _race_flow_fit(style,frame,front_count):
+ # RACE FLOW is deliberately a supporting filter, not the market engine.
+ base=_pace_fit(style,front_count)
+ if base is None:return None
+ adj=0.0
+ if style in ("逃・先","先・好位"):
+  if frame in (1,2,3):adj+=3.0
+  elif frame in (7,8):adj-=2.0
+ elif style=="差・追":
+  if front_count>=4:adj+=4.0
+  elif front_count<=2:adj-=3.0
+ return max(20.0,min(85.0,base+adj))
+
+def _race_flow_context(profiles):
+ styles={"逃・先":0,"先・好位":0,"中団":0,"差・追":0,"不明":0}
+ for p in profiles.values():styles[p.get("style") if p.get("style") in styles else "不明"]+=1
+ front=styles["逃・先"]+styles["先・好位"]
+ if front>=5:pace="HIGH";label="先行争い強め";bias="差し・中団が浮上しやすい"
+ elif front==4:pace="HIGH";label="やや速め";bias="好位差しまで警戒"
+ elif front==3:pace="BALANCED";label="平均想定";bias="極端な脚質バイアスは小さい"
+ else:pace="SLOW";label="落ち着く想定";bias="前残りを警戒"
+ return {"pace":pace,"label":label,"bias":bias,"front_count":front,"styles":styles}
+
+def _flow_path(style,frame,front_count,horse):
+ # Relative predicted position (1=front). This is a scenario visualization, not a claim of exact running order.
+ base={"逃・先":1.5,"先・好位":3.5,"中団":6.5,"差・追":9.5}.get(style,7.0)
+ fr=(int(frame)-4.5)*0.12 if frame else 0.0
+ start=base+fr
+ back=base + (0.2 if style=="逃・先" and front_count>=4 else -0.2 if style=="先・好位" else 0.0)
+ turn=back + (-0.5 if style=="先・好位" and front_count>=4 else -0.8 if style=="中団" and front_count>=4 else 0.2 if style=="差・追" and front_count<=2 else 0.0)
+ stretch=turn + (-1.5 if style=="差・追" and front_count>=4 else -0.9 if style=="中団" and front_count>=4 else -0.5 if style=="逃・先" and front_count<=2 else 0.5 if style=="逃・先" and front_count>=5 else 0.0)
+ vals=[start,back,turn,stretch]
+ return [round(max(1.0,min(12.0,v)),2) for v in vals]
+
+def race_flow_summary(key,rankings=None):
+ profiles=load_profiles(key);ctx=_race_flow_context(profiles);horses=[]
+ feature_map={int(x.get("horse")):x for x in (rankings or [])}
+ for h,p in sorted(profiles.items()):
+  f=feature_map.get(int(h),{});style=p.get("style","不明");frame=p.get("frame")
+  fit=f.get("race_flow_score")
+  if fit is None:fit=_race_flow_fit(style,frame,ctx["front_count"])
+  horses.append({"horse":int(h),"frame":frame,"name":p.get("name") or f"{h}番","style":style,"fit":None if fit is None else round(float(fit),1),
+                 "path":_flow_path(style,frame,ctx["front_count"],h),"scope":f.get("adaptive_score") or f.get("scope_score")})
+ # Convert the four phase positions to ranks so the animation stays readable regardless of field size.
+ for phase in range(4):
+  ordered=sorted(horses,key=lambda x:(x["path"][phase],x["horse"]))
+  for rank,x in enumerate(ordered,1):x.setdefault("ranks",[None]*4)[phase]=rank
+ return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"note":"脚質・枠・先行馬数から作るシナリオ予測。実際の隊列を保証するものではなく、ODDS SCOPEの補助フィルターです。"}
+
 def take(r):
  q=qfor(r)
  paths={"win":"OddsTanFuku","Q":"OddsUmLenFuku","E":"OddsUmLenTan","W":"OddsWide","R":"Odds3LenFuku","T":"Odds3LenTan"}
@@ -482,30 +537,66 @@ def _model_blend_weight(state):
   races=int(state.get("trained_races") or 0)
   maturity=max(0.0,min(1.0,(races-MIN_TRAIN_RACES)/220.0))
   gain=max(0.0,l-h)
-  return round(min(.40,.25+.10*maturity+min(.05,gain*1.5)),3)
+  cap=float(result_guardrail().get("model_cap",.40));return round(min(cap,.25+.10*maturity+min(.05,gain*1.5)),3)
  except Exception:return 0.0
 
 def _signal_profile(x,score=None):
- # Result-oriented signal calibration. SCOPE ranks horses; SIGNAL LEVEL measures how much evidence is aligned.
+ # Signal level asks a different question from rank: how many independent pieces of evidence agree?
  scope=float(score if score is not None else (x.get("adaptive_score") if x.get("adaptive_score") is not None else x.get("scope_score") or 0))
  dna=float(x.get("dna_score") or 0);flow=float(x.get("flow_score") or 0);accel=float(x.get("accel_score") or 0)
- pot=float(x.get("potun_score") or 0);cross=float(x.get("cross_score") or 0)
+ pot=float(x.get("potun_score") or 0);cross=float(x.get("cross_score") or 0);rf=float(x.get("race_flow_score") or 50)
  edge=x.get("edge_score");edgev=float(edge) if edge is not None else 50.0
  conf=float(x.get("data_confidence") or 0);pop=int(x.get("pop") or 99)
- confirmations=sum((dna>=58,flow>=58,accel>=65,pot>=60,cross>=65,(edge is not None and edgev>=58)))
- idx=.34*scope+.15*dna+.14*flow+.12*accel+.09*pot+.08*cross+.08*edgev
- idx+=max(0,confirmations-1)*2.0
- if pop>=7 and confirmations<2:idx-=4.0
- if pop>=10 and confirmations<3:idx-=2.0
- if pop<=3 and edge is not None and edgev>=58 and flow>=40:idx+=2.5
+ confirmations=sum((dna>=55,flow>=55,accel>=62,pot>=58,cross>=60,(edge is not None and edgev>=57),rf>=64))
+ idx=.31*scope+.14*dna+.13*flow+.11*accel+.08*pot+.07*cross+.08*edgev+.08*rf
+ idx+=max(0,confirmations-1)*1.8
+ if pop>=7 and confirmations<2:idx-=5.0
+ if pop>=10 and confirmations<3:idx-=3.0
+ if pop<=3 and edge is not None and edgev>=58 and flow>=38:idx+=2.0
  if conf<50:idx-=4.0
  idx=max(0.0,min(100.0,idx))
- if idx>=72 and confirmations>=3:grade,label="S","PRIME"
- elif idx>=62 and confirmations>=2:grade,label="A","STRONG"
- elif idx>=53:grade,label="B","SELECT"
- elif idx>=44:grade,label="C","WATCH"
+ if idx>=72 and confirmations>=4:grade,label="S","PRIME"
+ elif idx>=62 and confirmations>=3:grade,label="A","STRONG"
+ elif idx>=52 and confirmations>=1:grade,label="B","SELECT"
+ elif idx>=42:grade,label="C","WATCH"
  else:grade,label="D","LOW"
  return {"signal_index":round(idx,1),"signal_grade":grade,"signal_label":label,"confirmations":int(confirmations)}
+
+_GUARD_CACHE={"at":None,"data":{"status":"COLLECTING","longshot_penalty":0.0,"model_cap":.40,"races":0}}
+
+def result_guardrail(force=False):
+ # Rolling result guard. It does not chase one race; it only activates after 30 completed races.
+ global _GUARD_CACHE
+ now=datetime.now(JST)
+ if not force and _GUARD_CACHE.get("at") and (now-_GUARD_CACHE["at"]).total_seconds()<90:return _GUARD_CACHE["data"]
+ data={"status":"COLLECTING","longshot_penalty":0.0,"model_cap":.40,"races":0,"scope_rate":None,"favorite_rate":None}
+ try:
+  c=con();keys=[x["race_key"] for x in c.execute("SELECT race_key FROM results ORDER BY fetched_at DESC LIMIT 30").fetchall()];keys=list(reversed(keys))
+  if keys:
+   ph=','.join(['%s']*len(keys))
+   preds=[dict(x) for x in c.execute(f"SELECT p.*,r.first_horse,r.second_horse,r.third_horse FROM predictions p JOIN results r USING(race_key) WHERE p.race_key IN ({ph}) ORDER BY r.fetched_at,p.rank",keys).fetchall()]
+   sam=[dict(x) for x in c.execute(f"SELECT * FROM learning_samples WHERE race_key IN ({ph}) AND COALESCE(parser_version,1)>=8",keys).fetchall()]
+   bb={};ff={}
+   for x in preds:bb.setdefault(x["race_key"],[]).append(x)
+   for x in sam:ff.setdefault(x["race_key"],[]).append(x)
+   dh=dp=fh=fp=0
+   for k,rr in bb.items():
+    z=sorted(rr,key=lambda q:int(q.get("rank") or 99))[:3]
+    if not z:continue
+    finish={int(z[0]["first_horse"]),int(z[0]["second_horse"]),int(z[0]["third_horse"])};dh+=sum(int(int(q["horse"]) in finish) for q in z);dp+=len(z)
+   for k,rr in ff.items():
+    z=sorted(rr,key=lambda q:int(q.get("pop") or 99))[:3];fh+=sum(int(q.get("label") or 0) for q in z);fp+=len(z)
+   n=len(bb);sr=dh/dp if dp else None;fr=fh/fp if fp else None
+   data.update({"races":n,"scope_rate":sr,"favorite_rate":fr})
+   if n>=30 and sr is not None and fr is not None:
+    if sr>=fr+.02:data.update(status="PASS",longshot_penalty=0.0,model_cap=.40)
+    elif sr>=fr-.02:data.update(status="HOLD",longshot_penalty=2.0,model_cap=.30)
+    else:data.update(status="REVIEW",longshot_penalty=5.0,model_cap=.20)
+  c.close()
+ except Exception:
+  try:c.close()
+  except Exception:pass
+ _GUARD_CACHE={"at":now,"data":data};return data
 
 def rank_features(A,model_state=None):
  state=model_state if model_state is not None else get_model_state();out=[]
@@ -523,9 +614,9 @@ def rank_features(A,model_state=None):
   else:model_signal=None;final=base
   x["model_signal"]=None if model_signal is None else round(model_signal*100,1);x["model_weight"]=round(w*100,1)
   provisional=round(final*100,1);prof=_signal_profile(x,provisional);pop=int(x.get("pop") or 99);edge=x.get("edge_score");flow=float(x.get("flow_score") or 0)
-  adjust=0.0
-  if pop>=7 and prof["confirmations"]<2:adjust-=4.0
-  elif pop>=7 and prof["confirmations"]==2:adjust-=1.5
+  adjust=0.0;guard=result_guardrail()
+  if pop>=7 and prof["confirmations"]<2:adjust-=4.0+float(guard.get("longshot_penalty") or 0)
+  elif pop>=7 and prof["confirmations"]==2:adjust-=1.5+.35*float(guard.get("longshot_penalty") or 0)
   if pop<=3 and edge is not None and float(edge)>=58 and flow>=40:adjust+=2.0
   final=max(0.0,min(1.0,(provisional+adjust)/100.0))
   x["adaptive_score"]=round(final*100,1);x.update(_signal_profile(x,x["adaptive_score"]))
@@ -541,13 +632,13 @@ def scope_label(x):
  return f'{prof["signal_grade"]} {prof["signal_label"]}'
 
 def race_signal_summary(A):
- if not A:return {"grade":"D","label":"LOW SIGNAL","note":"有効な候補データ待ち","qualified":0,"top_index":0,"spread":0}
+ if not A:return {"grade":"D","label":"NO EDGE","action":"WAIT","note":"有効な候補データ待ち","qualified":0,"top_index":0,"spread":0}
  grade_order={"S":5,"A":4,"B":3,"C":2,"D":1};top=A[0];g=top.get("signal_grade") or "D";second=A[1] if len(A)>1 else None
  spread=float(top.get("adaptive_score") or 0)-float(second.get("adaptive_score") or 0) if second else 0.0
  qualified=sum(1 for x in A[:5] if grade_order.get(x.get("signal_grade","D"),1)>=3)
- meta={"S":("PRIME SIGNAL","複数指標が高水準で一致"),"A":("STRONG SIGNAL","有力シグナル。複数の裏付けあり"),"B":("SELECT SIGNAL","候補として注視する水準"),"C":("WATCH","シグナルは限定的。順位は参考"),"D":("LOW SIGNAL","明確なシグナルなし")}
- label,note=meta.get(g,meta["D"])
- return {"grade":g,"label":label,"note":note,"qualified":qualified,"top_index":round(float(top.get("signal_index") or 0),1),"spread":round(spread,1)}
+ meta={"S":("PRIME SIGNAL","PRIME","複数指標が高水準で一致"),"A":("STRONG SIGNAL","ACTIVE","複数の独立した裏付けあり"),"B":("SELECT SIGNAL","SELECTIVE","候補として注視する水準"),"C":("WATCH","WATCH","シグナルは限定的。順位は参考"),"D":("NO EDGE","PASS","明確なシグナルなし。無理に上位3頭を本命扱いしない")}
+ label,action,note=meta.get(g,meta["D"])
+ return {"grade":g,"label":label,"action":action,"note":note,"qualified":qualified,"top_index":round(float(top.get("signal_index") or 0),1),"spread":round(spread,1)}
 
 def adaptive_candidates(A):
  return A[:3],race_signal_summary(A)
@@ -563,7 +654,7 @@ def save_predictions(key,slot=3):
 
 def signal_strength(x):return scope_label(x)
 
-FEATURES=("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","log_odds","pop_scaled")
+FEATURES=("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","race_flow_score","log_odds","pop_scaled")
 MIN_TRAIN_RACES=80
 MIN_TRAIN_SAMPLES=600
 
@@ -619,14 +710,14 @@ def final_features(key):
   flow_score=round(max(0,min(100,.30*current_level+.32*accel_score+.23*float(r.get("cross_score") or 0)+.15*persistence)),1)
   gap=float(r.get("gap_score") or 0);iso=float(r.get("isolation_score") or 0);flo=float(r.get("float_score") or 0);cross=float(r.get("cross_score") or 0);pot=float(r.get("potun_score") or 0)
   dna=round(.12*gap+.16*iso+.14*flo+.18*cross+.22*pot+.18*accel_score,1)
-  p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count)
+  p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count);race_flow_fit=_race_flow_fit(style,p.get("frame"),front_count)
   form=p.get("form_score");dist=p.get("distance_score");course=p.get("course_score");jockey=p.get("jockey_score");cond=p.get("condition_score")
   edge,conf=_weighted_available([(form,.35),(dist,.20),(course,.15),(jockey,.10),(pace_fit,.10),(cond,.10)])
   out.append({**r,"flow_score":flow_score,"market_score":flow_score,"accel_score":accel_score,"dna_score":dna,
               "edge_score":round(edge,1) if edge is not None else None,"performance_score":round(edge,1) if edge is not None else None,
               "data_confidence":round(conf,1),"form_score":form,"distance_score":dist,"course_score":course,"jockey_score":jockey,
               "jockey_record":p.get("jockey_record",[0,0,0,0]),"jockey_has_data":bool(p.get("jockey_has_data",False)),
-              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,"style":style,"frame":p.get("frame"),
+              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,"race_flow_score":round(race_flow_fit,1) if race_flow_fit is not None else None,"style":style,"frame":p.get("frame"),
               "name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey",""),"recent_finishes":p.get("recent_finishes",[]),
               "body_weight":p.get("body_weight"),"body_diff":p.get("body_diff")})
  edge_rows=sorted([x for x in out if x.get("edge_score") is not None],key=lambda x:-x["edge_score"]);edge_rank={x["horse"]:i+1 for i,x in enumerate(edge_rows)}
@@ -702,14 +793,14 @@ def staged_features(key,target_slot):
   flow_score=round(max(0,min(100,.30*current_level+.32*accel_score+.23*float(r.get("cross_score") or 0)+.15*persistence)),1)
   gap=float(r.get("gap_score") or 0);iso=float(r.get("isolation_score") or 0);flo=float(r.get("float_score") or 0);cross=float(r.get("cross_score") or 0);pot=float(r.get("potun_score") or 0)
   dna=round(.12*gap+.16*iso+.14*flo+.18*cross+.22*pot+.18*accel_score,1)
-  p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count)
+  p=r.get("profile") or {};style=p.get("style","不明");pace_fit=_pace_fit(style,front_count);race_flow_fit=_race_flow_fit(style,p.get("frame"),front_count)
   form=p.get("form_score");dist=p.get("distance_score");course=p.get("course_score");jockey=p.get("jockey_score");cond=p.get("condition_score")
   edge,conf=_weighted_available([(form,.35),(dist,.20),(course,.15),(jockey,.10),(pace_fit,.10),(cond,.10)])
   out.append({**r,"flow_score":flow_score,"market_score":flow_score,"accel_score":accel_score,"dna_score":dna,
               "edge_score":round(edge,1) if edge is not None else None,"performance_score":round(edge,1) if edge is not None else None,
               "data_confidence":round(conf,1),"form_score":form,"distance_score":dist,"course_score":course,"jockey_score":jockey,
               "jockey_record":p.get("jockey_record",[0,0,0,0]),"jockey_has_data":bool(p.get("jockey_has_data",False)),
-              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,"style":style,"frame":p.get("frame"),
+              "condition_score":cond,"pace_score":round(pace_fit,1) if pace_fit is not None else None,"race_flow_score":round(race_flow_fit,1) if race_flow_fit is not None else None,"style":style,"frame":p.get("frame"),
               "name":p.get("name") or f'{r["horse"]}番',"jockey":p.get("jockey",""),"recent_finishes":p.get("recent_finishes",[]),
               "body_weight":p.get("body_weight"),"body_diff":p.get("body_diff")})
  edge_rows=sorted([x for x in out if x.get("edge_score") is not None],key=lambda x:-x["edge_score"]);edge_rank={x["horse"]:i+1 for i,x in enumerate(edge_rows)}
@@ -739,15 +830,15 @@ def store_learning_samples(key,rs):
  for x in rows:
   c.execute("""INSERT INTO learning_samples
    (race_key,horse,label,base15,base10,base5,base3,d1,d2,d3,agree,persist,odds15,odds10,odds5,odds3,win_flow1,win_flow2,win_flow3,win_move,odds,pop,heuristic,created_at,parser_version,
-    gap_score,isolation_score,float_score,cross_score,potun_score,accel_score,dna_score,edge_score,scope_score)
-   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    gap_score,isolation_score,float_score,cross_score,potun_score,accel_score,dna_score,edge_score,race_flow_score,scope_score)
+   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON CONFLICT(race_key,horse) DO UPDATE SET label=EXCLUDED.label,base15=EXCLUDED.base15,base10=EXCLUDED.base10,base5=EXCLUDED.base5,base3=EXCLUDED.base3,d1=EXCLUDED.d1,d2=EXCLUDED.d2,d3=EXCLUDED.d3,agree=EXCLUDED.agree,persist=EXCLUDED.persist,
     odds15=EXCLUDED.odds15,odds10=EXCLUDED.odds10,odds5=EXCLUDED.odds5,odds3=EXCLUDED.odds3,win_flow1=EXCLUDED.win_flow1,win_flow2=EXCLUDED.win_flow2,win_flow3=EXCLUDED.win_flow3,win_move=EXCLUDED.win_move,
     odds=EXCLUDED.odds,pop=EXCLUDED.pop,heuristic=EXCLUDED.heuristic,created_at=EXCLUDED.created_at,parser_version=EXCLUDED.parser_version,gap_score=EXCLUDED.gap_score,isolation_score=EXCLUDED.isolation_score,float_score=EXCLUDED.float_score,
-    cross_score=EXCLUDED.cross_score,potun_score=EXCLUDED.potun_score,accel_score=EXCLUDED.accel_score,dna_score=EXCLUDED.dna_score,edge_score=EXCLUDED.edge_score,scope_score=EXCLUDED.scope_score""",
+    cross_score=EXCLUDED.cross_score,potun_score=EXCLUDED.potun_score,accel_score=EXCLUDED.accel_score,dna_score=EXCLUDED.dna_score,edge_score=EXCLUDED.edge_score,race_flow_score=EXCLUDED.race_flow_score,scope_score=EXCLUDED.scope_score""",
    (key,x["horse"],1 if x["horse"] in top else 0,x["base15"],x["base10"],x["base5"],x["base3"],x["d1"],x["d2"],x["d3"],x["agree"],x["persist"],
     x["odds15"],x["odds10"],x["odds5"],x["odds3"],x["win_flow1"],x["win_flow2"],x["win_flow3"],x["win_move"],x["odds"],x["pop"],x["heuristic"],now,DATA_VERSION,
-    x["gap_score"],x["isolation_score"],x["float_score"],x["cross_score"],x["potun_score"],x["accel_score"],x["dna_score"],x.get("edge_score"),x["scope_score"]))
+    x["gap_score"],x["isolation_score"],x["float_score"],x["cross_score"],x["potun_score"],x["accel_score"],x["dna_score"],x.get("edge_score"),x.get("race_flow_score"),x["scope_score"]))
  c.commit();c.close();return len(rows)
 
 def _vec(r):
@@ -755,7 +846,7 @@ def _vec(r):
  return [float(r["base15"]),float(r["base10"]),float(r["base5"]),float(r.get("base3") or 0),float(r["d1"]),float(r["d2"]),float(r.get("d3") or 0),
          float(r["agree"]),float(r["persist"]),float(r.get("win_flow1") or 0),float(r.get("win_flow2") or 0),float(r.get("win_flow3") or 0),
          float(r.get("accel_score") or 0),float(r.get("gap_score") or 0),float(r.get("isolation_score") or 0),float(r.get("float_score") or 0),float(r.get("cross_score") or 0),
-         float(r.get("potun_score") or 0),float(r.get("dna_score") or 0),edge,math.log(max(float(r["odds"]),1.0001)),min(float(r["pop"]),18.0)/18.0]
+         float(r.get("potun_score") or 0),float(r.get("dna_score") or 0),edge,float(r.get("race_flow_score") if r.get("race_flow_score") is not None else 50.0),math.log(max(float(r["odds"]),1.0001)),min(float(r["pop"]),18.0)/18.0]
 
 def _fit(train):
  X=[_vec(r) for r in train];y=[int(r["label"]) for r in train];n=len(X);p=len(FEATURES)
@@ -837,7 +928,7 @@ def model_score(x,state=None):
  s=state if state is not None else get_model_state()
  if s.get("status")!="ACTIVE" or not s.get("weights"):return None
  try:
-  r={k:x.get(k) for k in ("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","odds","pop")}
+  r={k:x.get(k) for k in ("base15","base10","base5","base3","d1","d2","d3","agree","persist","win_flow1","win_flow2","win_flow3","accel_score","gap_score","isolation_score","float_score","cross_score","potun_score","dna_score","edge_score","race_flow_score","odds","pop")}
   return _prob(r,json.loads(s["weights"]),json.loads(s["means"]),json.loads(s["stds"]))
  except:return None
 
@@ -987,7 +1078,7 @@ def status():
   rankings=rank_features(features,rank_state) if features else []
   fm={x["horse"]:x for x in rankings}
   for p in pp:
-   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","odds4","odds3","win_flow1","win_flow2","win_flow3","win_move","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","gap_score","isolation_score","float_score","cross_score","potun_score","accel_score","dna_score","market_core","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff","adaptive_score","learned_prob","model_signal","model_weight","phase_slot","signal_index","signal_grade","signal_label","confirmations")})
+   if p["horse"] in fm:p.update({k:fm[p["horse"]].get(k) for k in ("odds15","odds10","odds5","odds4","odds3","win_flow1","win_flow2","win_flow3","win_move","market_score","flow_score","performance_score","edge_score","value_score","scope_score","data_confidence","gap_score","isolation_score","float_score","cross_score","potun_score","accel_score","dna_score","market_core","form_score","distance_score","course_score","jockey_score","jockey_record","jockey_has_data","condition_score","pace_score","race_flow_score","style","frame","name","jockey","recent_finishes","body_weight","body_diff","adaptive_score","learned_prob","model_signal","model_weight","phase_slot","signal_index","signal_grade","signal_label","confirmations")})
    p["strength"]=signal_strength(p)
   result=dict(rs) if rs else None
   result_eval=None
@@ -1002,7 +1093,15 @@ def status():
    elif hit_count==2:result_grade,result_label="B","2/3 CAPTURE"
    elif hit_count==1:result_grade,result_label="C","1/3 CAPTURE"
    else:result_grade,result_label="D","0/3"
-   result_eval={"picks":[int(z["horse"]) for z in delivered],"hits":hits,"hit_count":hit_count,"top1_place":top1_place,"perfect3":hit_count==3,"grade":result_grade,"label":result_label}
+   def _baseline_hits(seq,key,reverse=True):
+    z=sorted(seq,key=lambda q:float(q.get(key) if q.get(key) is not None else (-1e9 if reverse else 1e9)),reverse=reverse)[:3]
+    return sum(int(int(q["horse"]) in places) for q in z),[int(q["horse"]) for q in z]
+   fav_hits,fav_picks=_baseline_hits(rankings,"pop",False) if rankings else (None,[])
+   dna_hits,dna_picks=_baseline_hits(rankings,"dna_score",True) if rankings else (None,[])
+   edge_valid=[q for q in rankings if q.get("edge_score") is not None]
+   edge_hits,edge_picks=_baseline_hits(edge_valid,"edge_score",True) if edge_valid else (None,[])
+   result_eval={"picks":[int(z["horse"]) for z in delivered],"hits":hits,"hit_count":hit_count,"top1_place":top1_place,"perfect3":hit_count==3,"grade":result_grade,"label":result_label,
+                "favorite":{"hits":fav_hits,"picks":fav_picks},"dna":{"hits":dna_hits,"picks":dna_picks},"edge":{"hits":edge_hits,"picks":edge_picks}}
   profile_ready=any(x.get("name") and x.get("frame") for x in features) if features else bool(load_profiles(key))
   display_predictions=[]
   if rankings:
@@ -1043,7 +1142,9 @@ def status():
           "predictions":legacy_predictions,"market_rows":legacy_market,
           "note":"旧版保存データを表示中。Ver.11 ODDS DNAの再計算・学習には使用しません。"}
   race_signal=race_signal_summary(rankings)
-  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,race_signal=race_signal,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  race_flow=race_flow_summary(key,rankings)
+  guardrail=result_guardrail()
+  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
@@ -1139,4 +1240,4 @@ def learning():
  return jsonify(completed_races=lraces,predictions=total,top3_hits=hit,top3_rate=delivered_all["pick_rate"],signal_races=signal_races,race_hit_rate=delivered_all["race_hit_rate"],
   top1_place_rate=delivered_all["top1_place_rate"],perfect3_rate=delivered_all["perfect3_rate"],recent_performance=recent_delivered,recent_favorite=recent_fav,system_status=system_status,
   learning_races=lraces,learning_samples=samples,model_status=s["status"],model_version=s["version"],min_train_races=MIN_TRAIN_RACES,min_train_samples=MIN_TRAIN_SAMPLES,
-  heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"],model_blend_weight=_model_blend_weight(s),scope_baseline=scope_m,dna_baseline=dna_m,favorite_baseline=fav_m,edge_baseline=edge_m)
+  heuristic_val=s["heuristic_val"],learned_val=s["learned_val"],updated_at=s["updated_at"],model_blend_weight=_model_blend_weight(s),scope_baseline=scope_m,dna_baseline=dna_m,favorite_baseline=fav_m,edge_baseline=edge_m,guardrail=result_guardrail(force=True))
