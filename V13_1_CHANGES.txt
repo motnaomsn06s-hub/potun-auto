@@ -1,0 +1,13 @@
+ODDS SCOPE NAR Ver.13.1 beta
+
+- NAR LOCAL / 地方競馬 branding aligned with the JRA ODDS SCOPE family
+- AI race-development display upgraded to a course/pack visualization
+- Local FRAME SIGNAL added as frame-level aggregation of horse ODDS DNA
+- FRAME SIGNAL is explicitly NOT represented as official frame-quinella odds
+- Existing market-first scoring, staged 15/10/5/4/3 monitoring, result guard and learning logic preserved
+- Python syntax check passed for app.py and scoring.py
+
+Next validation:
+- deploy to the existing Render service
+- verify a real NAR race end-to-end
+- add official 枠連 market ingestion as a separate verified source

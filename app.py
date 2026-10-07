@@ -470,6 +470,7 @@ def _flow_path(style,frame,front_count,horse):
 
 def race_flow_summary(key,rankings=None):
  profiles=load_profiles(key);ctx=_race_flow_context(profiles);horses=[]
+ c=con();race=c.execute("SELECT baba,baba_name,race FROM races WHERE race_key=%s",(key,)).fetchone();c.close()
  feature_map={int(x.get("horse")):x for x in (rankings or [])}
  for h,p in sorted(profiles.items()):
   f=feature_map.get(int(h),{});style=p.get("style","不明");frame=p.get("frame")
@@ -481,7 +482,21 @@ def race_flow_summary(key,rankings=None):
  for phase in range(4):
   ordered=sorted(horses,key=lambda x:(x["path"][phase],x["horse"]))
   for rank,x in enumerate(ordered,1):x.setdefault("ranks",[None]*4)[phase]=rank
- return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"note":"脚質・枠・先行馬数から作るシナリオ予測。実際の隊列を保証するものではなく、ODDS SCOPEの補助フィルターです。"}
+ # Local-only frame intelligence: aggregate horse-level market distortion by gate frame.
+ # This is deliberately labelled separately from official 枠連 odds so the UI never confuses the two.
+ frames={}
+ for h in horses:
+  f=h.get("frame");feat=feature_map.get(int(h["horse"]),{})
+  if not f:continue
+  bucket=frames.setdefault(int(f),[])
+  v=feat.get("dna_score")
+  if v is not None:bucket.append(float(v))
+ frame_signal=[{"frame":f,"score":round(sum(v)/len(v),1),"n":len(v)} for f,v in frames.items() if v]
+ frame_signal.sort(key=lambda x:(-x["score"],x["frame"]))
+ venue=(race or {}).get("baba_name") if race else None
+ return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"venue":venue or "NAR","frame_signal":frame_signal[:4],
+         "note":"地方競馬向け：脚質・枠・先行馬数から作るシナリオ予測。実際の隊列を保証するものではなく、ODDS DNAの補助フィルターです。",
+         "frame_note":"FRAME SIGNALは馬単位ODDS DNAを枠別に集約した補助指標。公式の枠連オッズそのものではありません。"}
 
 def take(r):
  q=qfor(r)
