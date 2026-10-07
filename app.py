@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/13.0)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/13.1)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
@@ -457,46 +457,93 @@ def _race_flow_context(profiles):
  else:pace="SLOW";label="落ち着く想定";bias="前残りを警戒"
  return {"pace":pace,"label":label,"bias":bias,"front_count":front,"styles":styles}
 
-def _flow_path(style,frame,front_count,horse):
- # Relative predicted position (1=front). This is a scenario visualization, not a claim of exact running order.
- base={"逃・先":1.5,"先・好位":3.5,"中団":6.5,"差・追":9.5}.get(style,7.0)
- fr=(int(frame)-4.5)*0.12 if frame else 0.0
+def _scale_hist_pos(pos,field,current_n):
+ try:
+  pos=float(pos);field=int(field or current_n or 1);current_n=int(current_n or field or 1)
+  if pos<=0:return None
+  if field<=1 or current_n<=1:return max(1.0,min(float(current_n or 1),pos))
+  frac=max(0.0,min(1.0,(pos-1.0)/(field-1.0)))
+  return 1.0+frac*(current_n-1.0)
+ except Exception:return None
+
+def _weighted_mean(vals):
+ vals=[(float(v),float(w)) for v,w in vals if v is not None and w>0]
+ if not vals:return None
+ sw=sum(w for _,w in vals)
+ return sum(v*w for v,w in vals)/sw if sw else None
+
+def _flow_path(style,frame,front_count,horse,profile=None,current_n=12):
+ """Four predicted relative positions: START / BACK / 3-4C / STRETCH.
+ Prefer official recent corner positions when available. Fall back to a coarse style scenario.
+ This is a scenario estimate, never actual telemetry.
+ """
+ p=profile or {};runs=p.get("recent_runs") or []
+ weights=(1.0,.82,.67,.54)
+ starts=[];backs=[];turns=[];fin_moves=[];used=0
+ for w,r in zip(weights,runs[:4]):
+  corners=r.get("corners") or [];field=r.get("field") or current_n
+  if not corners:continue
+  a=_scale_hist_pos(corners[0],field,current_n)
+  b=_scale_hist_pos(corners[len(corners)//2],field,current_n)
+  c=_scale_hist_pos(corners[-1],field,current_n)
+  f=_scale_hist_pos(r.get("finish"),field,current_n)
+  if a is not None:starts.append((a,w))
+  if b is not None:backs.append((b,w))
+  if c is not None:turns.append((c,w))
+  if c is not None and f is not None:fin_moves.append((f-c,w))
+  used+=1
+ if used:
+  start=_weighted_mean(starts);back=_weighted_mean(backs);turn=_weighted_mean(turns)
+  if start is None:start=back if back is not None else turn
+  if back is None:back=start if start is not None else turn
+  if turn is None:turn=back if back is not None else start
+  move=_weighted_mean(fin_moves)
+  stretch=(turn if turn is not None else 7.0)+(0.72*(move or 0.0))
+  # Pace pressure: front runners are more vulnerable when many want the lead;
+  # closers get a modest lift. Keep this deliberately small.
+  if front_count>=5:
+   if style=="逃・先":stretch+=.75
+   elif style=="先・好位":stretch+=.30
+   elif style=="中団":stretch-=.35
+   elif style=="差・追":stretch-=.70
+  elif front_count<=2:
+   if style=="逃・先":stretch-=.55
+   elif style=="差・追":stretch+=.45
+  fr=(int(frame)-4.5)*.06 if frame else 0.0
+  if start is not None:start+=fr
+  vals=[start,back,turn,stretch]
+  return [round(max(1.0,min(float(current_n),float(v if v is not None else 7.0))),2) for v in vals],used,"RECENT_CORNERS"
+ # Fallback only when corner data are unavailable.
+ base={"逃・先":1.7,"先・好位":3.7,"中団":6.7,"差・追":9.7}.get(style,7.2)
+ scale=max(0.65,min(1.45,current_n/12.0))
+ base=1+(base-1)*scale
+ fr=(int(frame)-4.5)*0.10 if frame else 0.0
  start=base+fr
- back=base + (0.2 if style=="逃・先" and front_count>=4 else -0.2 if style=="先・好位" else 0.0)
- turn=back + (-0.5 if style=="先・好位" and front_count>=4 else -0.8 if style=="中団" and front_count>=4 else 0.2 if style=="差・追" and front_count<=2 else 0.0)
- stretch=turn + (-1.5 if style=="差・追" and front_count>=4 else -0.9 if style=="中団" and front_count>=4 else -0.5 if style=="逃・先" and front_count<=2 else 0.5 if style=="逃・先" and front_count>=5 else 0.0)
+ back=base + (0.25 if style=="逃・先" and front_count>=4 else -0.15 if style=="先・好位" else 0.0)
+ turn=back + (-0.45 if style=="先・好位" and front_count>=4 else -0.70 if style=="中団" and front_count>=4 else 0.20 if style=="差・追" and front_count<=2 else 0.0)
+ stretch=turn + (-1.10 if style=="差・追" and front_count>=4 else -0.65 if style=="中団" and front_count>=4 else -0.45 if style=="逃・先" and front_count<=2 else 0.55 if style=="逃・先" and front_count>=5 else 0.0)
  vals=[start,back,turn,stretch]
- return [round(max(1.0,min(12.0,v)),2) for v in vals]
+ return [round(max(1.0,min(float(current_n),v)),2) for v in vals],0,"STYLE_FALLBACK"
 
 def race_flow_summary(key,rankings=None):
- profiles=load_profiles(key);ctx=_race_flow_context(profiles);horses=[]
- c=con();race=c.execute("SELECT baba,baba_name,race FROM races WHERE race_key=%s",(key,)).fetchone();c.close()
+ profiles=load_profiles(key);ctx=_race_flow_context(profiles);horses=[];n=max(1,len(profiles))
  feature_map={int(x.get("horse")):x for x in (rankings or [])}
+ corner_sources=0
  for h,p in sorted(profiles.items()):
   f=feature_map.get(int(h),{});style=p.get("style","不明");frame=p.get("frame")
   fit=f.get("race_flow_score")
   if fit is None:fit=_race_flow_fit(style,frame,ctx["front_count"])
+  path,used,source=_flow_path(style,frame,ctx["front_count"],h,p,n)
+  if used:corner_sources+=1
   horses.append({"horse":int(h),"frame":frame,"name":p.get("name") or f"{h}番","style":style,"fit":None if fit is None else round(float(fit),1),
-                 "path":_flow_path(style,frame,ctx["front_count"],h),"scope":f.get("adaptive_score") or f.get("scope_score")})
- # Convert the four phase positions to ranks so the animation stays readable regardless of field size.
+                 "path":path,"flow_source":source,"flow_runs":used,"scope":f.get("adaptive_score") or f.get("scope_score")})
+ # Convert phase positions to readable ranks; ties are resolved by horse number only for display stability.
  for phase in range(4):
   ordered=sorted(horses,key=lambda x:(x["path"][phase],x["horse"]))
   for rank,x in enumerate(ordered,1):x.setdefault("ranks",[None]*4)[phase]=rank
- # Local-only frame intelligence: aggregate horse-level market distortion by gate frame.
- # This is deliberately labelled separately from official 枠連 odds so the UI never confuses the two.
- frames={}
- for h in horses:
-  f=h.get("frame");feat=feature_map.get(int(h["horse"]),{})
-  if not f:continue
-  bucket=frames.setdefault(int(f),[])
-  v=feat.get("dna_score")
-  if v is not None:bucket.append(float(v))
- frame_signal=[{"frame":f,"score":round(sum(v)/len(v),1),"n":len(v)} for f,v in frames.items() if v]
- frame_signal.sort(key=lambda x:(-x["score"],x["frame"]))
- venue=(race or {}).get("baba_name") if race else None
- return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"venue":venue or "NAR","frame_signal":frame_signal[:4],
-         "note":"地方競馬向け：脚質・枠・先行馬数から作るシナリオ予測。実際の隊列を保証するものではなく、ODDS DNAの補助フィルターです。",
-         "frame_note":"FRAME SIGNALは馬単位ODDS DNAを枠別に集約した補助指標。公式の枠連オッズそのものではありません。"}
+ conf=round(100*corner_sources/max(1,n))
+ return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"flow_confidence":conf,
+         "note":f"近走の公式コーナー位置を優先して作る展開シナリオ（データ反映 {corner_sources}/{n}頭）。実際の位置情報ではなく予想アニメーションです。"}
 
 def take(r):
  q=qfor(r)
