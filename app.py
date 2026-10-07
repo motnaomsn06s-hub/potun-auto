@@ -2,6 +2,7 @@ from flask import Flask,request,jsonify,send_from_directory
 import requests,re,math,os,json
 import psycopg
 from psycopg.rows import dict_row
+from capture_timing import capture_slot, capture_still_valid
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -563,7 +564,7 @@ def take(r):
  if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("主要オッズ取得不完全 "+str(cnt))
  market_sum=sum(1.0/o for _,o in W if o>0)
  if not 0.55<=market_sum<=2.20:raise RuntimeError(f"単勝オッズ検証NG market_sum={market_sum:.3f} counts={cnt}")
- return {"rows":analyse(W,Q,E,T,Wide,Trio),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat(timespec="seconds")}
+ return {"rows":analyse(W,Q,E,T,Wide,Trio),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat()}
 
 def valid_payload(p):
  return isinstance(p,dict) and int(p.get("parser_version") or 0)>=DATA_VERSION
@@ -1017,14 +1018,19 @@ def due():
    if oldrow:
     try:ex=valid_payload(json.loads(oldrow["payload"]))
     except:ex=False
-   if slot==10: in_window=(8.90 < mins <= 11.20)
-   elif slot==5: in_window=(4.35 < mins <= 6.20)
-   elif slot==4: in_window=(3.35 < mins <= 4.60)
-   elif slot==3: in_window=(1.85 <= mins <= 3.60)
-   else: in_window=(slot-1.25 <= mins <= slot+0.72)
+   capture_started=datetime.now(JST)
+   post_time=datetime.fromisoformat(r["start_iso"])
+   in_window=capture_slot((post_time-capture_started).total_seconds()/60)==slot
    if not ex and in_window:
     try:
-     data=take(r);c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
+     data=take(r)
+     finished=datetime.fromisoformat(data["fetched_at"])
+     if not capture_still_valid(slot,capture_started,finished,post_time):
+      ev.append(f'{r["race_key"]}:{slot}:SKIPPED_LATE')
+      continue
+     data["capture_started_at"]=capture_started.isoformat()
+     data["capture_slot"]=slot
+     c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
       ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
      if slot in (10,5,4,3):save_predictions(r["race_key"],slot)
@@ -1050,8 +1056,8 @@ def reserve():
   # Late reservations are allowed. Start from the earliest snapshot window that is still realistically reachable.
   if mins_left>=13.75:start_stage=15
   elif mins_left>8.90:start_stage=10
-  elif mins_left>4.35:start_stage=5
-  elif mins_left>3.35:start_stage=4
+  elif mins_left>4.60:start_stage=5
+  elif mins_left>3.60:start_stage=4
   else:start_stage=3
   c=con()
   c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,0)
@@ -1093,7 +1099,7 @@ def races():
  except Exception as e:
   try:c.close()
   except Exception:pass
-  return jsonify(races=[],error=str(e)),200
+  return jsonify(races=[],error="予約一覧を取得できません。時間をおいて再試行してください。"),503
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
  try:
