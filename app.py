@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/13.2)"}
+UA={"User-Agent":"Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}
 JST=timezone(timedelta(hours=9))
 DATABASE_URL=os.environ.get("DATABASE_URL")
 
