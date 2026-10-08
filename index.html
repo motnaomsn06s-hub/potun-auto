@@ -402,14 +402,59 @@ function flowBodyHorse(ctx,x,y,size,frame,gait,highlight){
   if(highlight){ctx.strokeStyle='rgba(255,223,113,.28)';ctx.lineWidth=1.3;ctx.beginPath();ctx.ellipse(-8,-55,85,67,0,0,Math.PI*2);ctx.stroke()}
   ctx.restore();
 }
-function drawFlowScene(t=0){let cv=$('flowCanvas'),rf=last?.race_flow;if(!cv||!rf?.horses?.length)return;let rc=cv.getBoundingClientRect(),w=Math.max(250,Math.floor(rc.width)),h=Math.max(240,Math.floor(rc.height));if(!w||!h)return;let dpr=Math.min(2,window.devicePixelRatio||1);if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}let ctx=cv.getContext('2d');if(!ctx)return;ctx.setTransform(dpr,0,0,dpr,0,0);flowBackdrop(ctx,w,h,t);
+/* Procedural perspective 3D race renderer: depth-sorted projected geometry, no third-party dependency. */
+function flow3DProject(X,Y,Z,w,h){const f=Math.min(w*1.3,h*2.6),depth=Math.max(1,10+Z);return [w*.5+X*f/depth,h*.45-Y*f/depth,f/depth]}
+function flow3DHorse(ctx,x,y,size,frame,gait,highlight){
+ const silk=FLOW_FRAME_COLORS[Math.max(0,Math.min(7,(Number(frame)||1)-1))],coats=['#452d23','#644333','#352720','#80573c','#272727','#74513d'],coat=coats[(Number(frame)||1)%coats.length];
+ ctx.save();ctx.translate(x,y);ctx.scale(size,size);
+ const phase=gait*Math.PI*2,cycle=Math.sin(phase),bounce=Math.abs(Math.sin(phase)) * 3;
+ ctx.translate(0,-bounce);
+ // Contact shadow and dust.
+ ctx.fillStyle='rgba(3,9,10,.34)';ctx.beginPath();ctx.ellipse(-7,8,52,8,0,0,7);ctx.fill();
+ const limb=(ax,ay,dx,dy,front)=>{let kneeX=ax+dx*.56,kneeY=ay+dy*.42+Math.sin(phase+(front?0:2))*10;ctx.lineCap='round';ctx.strokeStyle='#231b18';ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(kneeX,kneeY);ctx.lineTo(ax+dx,ay+dy);ctx.stroke();ctx.strokeStyle=coat;ctx.lineWidth=6;ctx.stroke();ctx.strokeStyle='#11191d';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(ax+dx-4,ay+dy);ctx.lineTo(ax+dx+9,ay+dy+1);ctx.stroke()};
+ limb(-37,-24,-30+cycle*30,32,0);limb(22,-24,29-cycle*30,32,1);
+ // Volumetric body: offset ellipses simulate barrel, shoulder and haunch.
+ let grad=ctx.createLinearGradient(-28,-71,12,-12);grad.addColorStop(0,'#aa8668');grad.addColorStop(.32,coat);grad.addColorStop(1,'#1a1717');ctx.fillStyle=grad;
+ ctx.beginPath();ctx.ellipse(-13,-46,48,25,-.04,0,7);ctx.fill();
+ ctx.fillStyle='rgba(255,235,200,.12)';ctx.beginPath();ctx.ellipse(-23,-56,26,8,-.08,0,7);ctx.fill();
+ ctx.fillStyle=coat;ctx.beginPath();ctx.moveTo(3,-57);ctx.lineTo(33,-96);ctx.quadraticCurveTo(47,-102,51,-87);ctx.lineTo(31,-39);ctx.closePath();ctx.fill();
+ ctx.fillStyle=grad;ctx.beginPath();ctx.ellipse(44,-90,20,12,-.28,0,7);ctx.fill();
+ ctx.fillStyle=coat;ctx.beginPath();ctx.moveTo(48,-99);ctx.lineTo(50,-113);ctx.lineTo(56,-98);ctx.lineTo(62,-96);ctx.closePath();ctx.fill();
+ ctx.fillStyle='#211a18';ctx.beginPath();ctx.moveTo(55,-88);ctx.lineTo(74,-79);ctx.lineTo(68,-68);ctx.lineTo(53,-75);ctx.closePath();ctx.fill();
+ ctx.fillStyle='#f1e1cb';ctx.beginPath();ctx.arc(55,-90,2,0,7);ctx.fill();
+ // Mane and tail, animated.
+ for(let i=0;i<3;i++)flowLine(ctx,[[-51,-47],[-69,-56-i*4+cycle*5],[-80,-49-i*5+cycle*9]],'#241c19',3.5);
+ for(let i=0;i<5;i++)flowLine(ctx,[[30-i*3,-97],[15-i*4,-107+cycle*3]],'#1d1716',2.8);
+ // Jockey silks, reins and helmet.
+ ctx.fillStyle='#121b23';ctx.beginPath();ctx.ellipse(-3,-65,26,6,0,0,7);ctx.fill();
+ ctx.fillStyle=silk;ctx.beginPath();ctx.moveTo(-17,-96);ctx.lineTo(5,-90);ctx.lineTo(16,-68);ctx.lineTo(-7,-71);ctx.closePath();ctx.fill();
+ ctx.strokeStyle='#f2f2e9';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-12,-88);ctx.lineTo(7,-82);ctx.stroke();
+ ctx.strokeStyle='#141d24';ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(-8,-73);ctx.lineTo(11,-51);ctx.stroke();
+ ctx.fillStyle='#c9a27d';ctx.beginPath();ctx.arc(-16,-113,8,0,7);ctx.fill();
+ ctx.fillStyle=silk;ctx.beginPath();ctx.arc(-17,-116,9,Math.PI,Math.PI*2);ctx.fill();
+ flowLine(ctx,[[-5,-91],[22,-83],[45,-79]],'#c6a080',4);
+ flowLine(ctx,[[47,-82],[52,-72],[29,-59]],'#d3b68d',1.5);
+ limb(-38,-24,-28-cycle*30,34,0);limb(20,-25,28+cycle*30,34,1);
+ if(highlight){ctx.strokeStyle='rgba(255,220,119,.55)';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(-4,-58,86,68,0,0,7);ctx.stroke()}
+ ctx.restore();
+}
+function flow3DBackdrop(ctx,w,h,t){
+ const horizon=h*.34,sky=ctx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#061322');sky.addColorStop(.36,'#354e61');sky.addColorStop(.38,'#354b32');sky.addColorStop(1,'#806347');ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);
+ // Camera-height projection of track edges and vanishing-point rails.
+ const vanX=w*.58,vanY=h*.34;ctx.fillStyle='#98724e';ctx.beginPath();ctx.moveTo(0,h*.58);ctx.lineTo(w,h*.40);ctx.lineTo(w,h);ctx.lineTo(0,h);ctx.fill();
+ ctx.strokeStyle='#f4e8cf';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(0,h*.56);ctx.lineTo(w,vanY+13);ctx.stroke();
+ ctx.strokeStyle='#d7d8cf';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,h*.64);ctx.lineTo(w,vanY+29);ctx.stroke();
+ for(let i=0;i<22;i++){let u=((i/22+t*.00012)%1);let px=vanX+(u*u)*(0-vanX),py=vanY+u*u*h*.30;ctx.strokeStyle='rgba(248,234,204,'+(.12+u*.6)+')';ctx.lineWidth=.5+u*3;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px,py+6+u*17);ctx.stroke()}
+ for(let i=0;i<18;i++){let u=((i/18+t*.00021)%1);let py=vanY+h*.1+u*u*h*.65;ctx.strokeStyle='rgba(255,234,191,'+(.03+u*.1)+')';ctx.lineWidth=.5+u*2;ctx.beginPath();ctx.moveTo(0,py);ctx.lineTo(w,py-u*45);ctx.stroke()}
+}
+function drawFlowScene(t=0){let cv=$('flowCanvas'),rf=last?.race_flow;if(!cv||!rf?.horses?.length)return;let rc=cv.getBoundingClientRect(),w=Math.max(250,Math.floor(rc.width)),h=Math.max(240,Math.floor(rc.height));if(!w||!h)return;let dpr=Math.min(2,window.devicePixelRatio||1);if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}let ctx=cv.getContext('2d');if(!ctx)return;ctx.setTransform(dpr,0,0,dpr,0,0);flow3DBackdrop(ctx,w,h,t);
   const order=flowRanked(rf,flowProgress);flowHitBoxes=[];
   order.map(z=>{const no=Number(z.h.horse)||0,rank=Math.max(0,z.pos-1),phase=Math.max(0,Math.min(1,flowProgress));const stableLane=((no*7+Number(z.h.frame||1)*3)%7)/6;const passing=Math.sin(phase*Math.PI*2+no*.71)*Math.sin(phase*Math.PI)*.42;return {...z,lane:Math.max(0,Math.min(1,stableLane+passing)),rank}}).sort((a,b)=>a.lane-b.lane).forEach(({h:horse,pos,lane,rank})=>{
     const spread=Math.max(1,order.length-1),progress=Math.max(0,Math.min(1,flowProgress)),finishRun=Math.max(0,(progress-.72)/.28),x=w*(.86-.70*rank/spread)+Math.sin(progress*9+Number(horse.horse)*1.7)*Math.min(4,w*.005)+finishRun*w*.30,y=h*(.51+lane*.36),size=Math.min(1,w/720)*(.56+lane*.28),frame=Number(horse.frame)||1,active=Number(selectedHorse)===Number(horse.horse);
     // Ground-contact shadow and kick-up dust scale with perspective.
     ctx.save();ctx.fillStyle='rgba(8,9,8,.26)';ctx.beginPath();ctx.ellipse(x-5*size,y+3*size,56*size,7*size,0,0,Math.PI*2);ctx.fill();
     if(flowProgress>.02&&flowProgress<.995){for(let j=0;j<3;j++){let q=(t*.0007+j*.31+Number(horse.horse)*.13)%1;ctx.fillStyle='rgba(215,189,143,'+(.12*(1-q)).toFixed(3)+')';ctx.beginPath();ctx.ellipse(x-(28+q*75)*size,y-(4+q*14)*size,(3+q*9)*size,(2+q*5)*size,0,0,Math.PI*2);ctx.fill()}}ctx.restore();
-    flowBodyHorse(ctx,x,y,size,frame,t*.0018+Number(horse.horse)*.17,active);
+    flow3DHorse(ctx,x,y,size,frame,t*.0018+Number(horse.horse)*.17,active);
     const by=y-112*size;ctx.fillStyle=FLOW_FRAME_COLORS[Math.max(0,Math.min(7,frame-1))];ctx.beginPath();ctx.roundRect(x-13,by-12,26,24,5);ctx.fill();ctx.fillStyle=[1,5].includes(frame)?'#071521':'#fff';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText(String(horse.horse),x,by+5);
     if(active){const label=String(horse.name||horse.horse+'番');ctx.font='bold 12px system-ui';const width=Math.min(w-20,ctx.measureText(label).width+18),lx=Math.max(width/2+5,Math.min(w-width/2-5,x));ctx.fillStyle='#071720';ctx.fillRect(lx-width/2,y+8,width,22);ctx.fillStyle='#ffe49b';ctx.fillText(label,lx,y+23)}
     ctx.textAlign='left';flowHitBoxes.push({horse:Number(horse.horse),x,y:y-45*size,w:Math.max(19,60*size),h:Math.max(38,120*size)})
