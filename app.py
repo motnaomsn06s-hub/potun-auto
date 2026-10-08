@@ -399,7 +399,7 @@ def parse_deba(s,race=None):
    "body_weight":bw,"body_diff":bd,"form_score":round(form,1) if form is not None else None,
    "distance_score":round(dist,1) if dist is not None else None,"course_score":round(crs,1) if crs is not None else None,
    "jockey_score":round(jockey_score,1) if jockey_score is not None else None,
-   "condition_score":round(cond,1) if cond is not None else None,"current_distance":current_distance,"course_meta":course_meta}
+   "condition_score":round(cond,1) if cond is not None else None,"current_distance":current_distance,"current_venue":(race or {}).get("baba_name"),"course_meta":course_meta}
  return out
 
 def load_profiles(key):
@@ -488,6 +488,11 @@ def _flow_path(style,frame,front_count,horse,profile=None,current_n=12):
  for w,r in zip(weights,runs[:4]):
   corners=r.get("corners") or [];field=r.get("field") or current_n
   if not corners:continue
+  # Similar distances and the same venue are more relevant; never invent absent values.
+  distance=p.get("current_distance") or (p.get("course_meta") or {}).get("distance")
+  if distance and r.get("distance"):
+   w*=max(.35,1.0/(1.0+abs(float(distance)-float(r["distance"]))/400.0))
+  if p.get("current_venue") and r.get("venue")==p["current_venue"]:w*=1.15
   a=_scale_hist_pos(corners[0],field,current_n)
   b=_scale_hist_pos(corners[len(corners)//2],field,current_n)
   c=_scale_hist_pos(corners[-1],field,current_n)
@@ -530,6 +535,17 @@ def _flow_path(style,frame,front_count,horse,profile=None,current_n=12):
  vals=[start,back,turn,stretch]
  return [round(max(1.0,min(float(current_n),v)),2) for v in vals],0,"STYLE_FALLBACK"
 
+def _flow_evidence(profile,current_n):
+ runs=[r for r in (profile.get("recent_runs") or [])[:4] if r.get("corners")]
+ positions=[_scale_hist_pos(r["corners"][0],r.get("field"),current_n) for r in runs]
+ positions=[v for v in positions if v is not None]
+ distance=profile.get("current_distance") or (profile.get("course_meta") or {}).get("distance")
+ comparable=sum(1 for r in runs if distance and r.get("distance") and abs(float(distance)-float(r["distance"]))<=200)
+ return {"sample_runs":len(runs),"similar_distance_runs":comparable,
+         "early_position_range":[round(min(positions),1),round(max(positions),1)] if positions else None,
+         "basis":"近走コーナー位置" if runs else "脚質・枠による補完",
+         "stability":"資料不足" if len(positions)<2 else "位置取りの振れ大" if max(positions)-min(positions)>=current_n*.35 else "位置取りは比較的安定"}
+
 def race_flow_summary(key,rankings=None):
  profiles=load_profiles(key);ctx=_race_flow_context(profiles);horses=[];n=max(1,len(profiles))
  feature_map={int(x.get("horse")):x for x in (rankings or [])}
@@ -541,15 +557,15 @@ def race_flow_summary(key,rankings=None):
   path,used,source=_flow_path(style,frame,ctx["front_count"],h,p,n)
   if used:corner_sources+=1
   horses.append({"horse":int(h),"frame":frame,"name":p.get("name") or f"{h}番","style":style,"fit":None if fit is None else round(float(fit),1),
-                 "path":path,"flow_source":source,"flow_runs":used,"scope":f.get("adaptive_score") or f.get("scope_score")})
+                 "path":path,"flow_source":source,"flow_runs":used,"evidence":_flow_evidence(p,n),"scope":f.get("adaptive_score") or f.get("scope_score")})
  # Convert phase positions to readable ranks; ties are resolved by horse number only for display stability.
  for phase in range(4):
   ordered=sorted(horses,key=lambda x:(x["path"][phase],x["horse"]))
   for rank,x in enumerate(ordered,1):x.setdefault("ranks",[None]*4)[phase]=rank
  conf=round(100*corner_sources/max(1,n))
- course=next((p.get("course_meta") for p in profiles.values() if p.get("course_meta")),{})
+ course=next((p.get("course_meta") for p in profiles.values() if (p.get("course_meta") or {}).get("direction")),None) or next((p.get("course_meta") for p in profiles.values() if p.get("course_meta")),{})
  return {**ctx,"course":course,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"flow_confidence":conf,
-         "note":f"近走の公式コーナー位置を優先して作る展開シナリオ（データ反映 {corner_sources}/{n}頭）。実際の位置情報ではなく予想アニメーションです。"}
+         "note":f"近走最大4走の位置取りを、頭数・距離の近さ・同一場（取得時）で補正。脚質・先行争い・枠を加えた展開シナリオです。近走データあり {corner_sources}/{len(horses)}頭。この割合は的中確率ではありません。"}
 
 def take(r):
  q=qfor(r)
