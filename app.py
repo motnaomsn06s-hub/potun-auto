@@ -349,6 +349,10 @@ def parse_deba(s,race=None):
  page_text=s.get_text(" ",strip=True)
  md=re.search(r"(?:ダート|芝)?\s*(\d{3,4})ｍ",page_text)
  current_distance=int(md.group(1)) if md else None
+ course_match=re.search(r"(ダート|芝)\s*(\d{3,4})[ｍm]\s*[（(]([^）)]+)[）)]",page_text)
+ course_meta={"distance":current_distance,"surface":course_match.group(1) if course_match else None,
+              "direction":("left" if "左" in course_match.group(3) else "right" if "右" in course_match.group(3) else None) if course_match else None,
+              "layout":course_match.group(3) if course_match else None}
  out={};last_frame=None
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])]
@@ -395,7 +399,7 @@ def parse_deba(s,race=None):
    "body_weight":bw,"body_diff":bd,"form_score":round(form,1) if form is not None else None,
    "distance_score":round(dist,1) if dist is not None else None,"course_score":round(crs,1) if crs is not None else None,
    "jockey_score":round(jockey_score,1) if jockey_score is not None else None,
-   "condition_score":round(cond,1) if cond is not None else None,"current_distance":current_distance}
+   "condition_score":round(cond,1) if cond is not None else None,"current_distance":current_distance,"course_meta":course_meta}
  return out
 
 def load_profiles(key):
@@ -543,7 +547,8 @@ def race_flow_summary(key,rankings=None):
   ordered=sorted(horses,key=lambda x:(x["path"][phase],x["horse"]))
   for rank,x in enumerate(ordered,1):x.setdefault("ranks",[None]*4)[phase]=rank
  conf=round(100*corner_sources/max(1,n))
- return {**ctx,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"flow_confidence":conf,
+ course=next((p.get("course_meta") for p in profiles.values() if p.get("course_meta")),{})
+ return {**ctx,"course":course,"phases":["START","BACK","3-4C","STRETCH"],"horses":horses,"flow_confidence":conf,
          "note":f"近走の公式コーナー位置を優先して作る展開シナリオ（データ反映 {corner_sources}/{n}頭）。実際の位置情報ではなく予想アニメーションです。"}
 
 def take(r):
@@ -1046,6 +1051,12 @@ def due():
 
 @app.route("/")
 def home():return send_from_directory(".","index.html")
+@app.route("/race3d.js")
+def race3d_asset():return send_from_directory(app.root_path,"race3d.js",max_age=0)
+@app.route("/assets/three.min.js")
+def three_asset():return send_from_directory(os.path.join(app.root_path,"assets"),"three.min.js",max_age=86400)
+@app.route("/assets/THREE-LICENSE.txt")
+def three_license():return send_from_directory(os.path.join(app.root_path,"assets"),"THREE-LICENSE.txt")
 @app.route("/api/reserve",methods=["POST"])
 def reserve():
  try:
