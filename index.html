@@ -359,6 +359,11 @@ function flowBackdrop(ctx,w,h,t){
     let u=((i/8+off*.22)%1);let y=h*(.55+.49*u*u),lw=(.5+u*3.7),alpha=.13+u*.11;
     ctx.strokeStyle=`rgba(239,223,172,${alpha})`;ctx.lineWidth=lw;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y-18*u);ctx.stroke();
   }
+  // Broadcast-style depth cues: track perspective, animated speed streaks and near-camera dust.
+  const speed=Math.min(1,Math.max(0,flowProgress*1.25));
+  ctx.save();ctx.lineCap='round';
+  for(let i=0;i<28;i++){let seed=(i*73.91)%1,depth=((i*.173+t*.00019)%1),px=((i*97.3+t*.13*(.2+depth))%(w+120))-60,py=h*(.54+.44*depth*depth);ctx.strokeStyle='rgba(235,210,165,'+(.035+depth*.11).toFixed(3)+')';ctx.lineWidth=.4+depth*2.2;ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px-(8+depth*38)*speed,py+depth*2);ctx.stroke()}
+  ctx.restore();
   // finish marker approaching in last phase (visual marker, not an actual result)
   if(flowProgress>.72){let alpha=Math.min(1,(flowProgress-.72)*5),xx=w*(.96-(flowProgress-.72)/.28*.96);ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle='#e8dfb5';ctx.fillRect(xx,h*.45,3,h*.53);ctx.fillStyle='#081720';for(let row=0;row<9;row++)for(let col=0;col<2;col++)if((row+col)%2===0)ctx.fillRect(xx+col*6,h*.48+row*6,6,6);ctx.restore()}
   let wash=ctx.createLinearGradient(0,0,0,h);wash.addColorStop(0,'rgba(1,8,14,.03)');wash.addColorStop(1,'rgba(1,8,14,.4)');ctx.fillStyle=wash;ctx.fillRect(0,0,w,h);
@@ -401,6 +406,9 @@ function drawFlowScene(t=0){let cv=$('flowCanvas'),rf=last?.race_flow;if(!cv||!r
   const order=flowRanked(rf,flowProgress);flowHitBoxes=[];
   order.map(z=>{const no=Number(z.h.horse)||0,rank=Math.max(0,z.pos-1),phase=Math.max(0,Math.min(1,flowProgress));const stableLane=((no*7+Number(z.h.frame||1)*3)%7)/6;const passing=Math.sin(phase*Math.PI*2+no*.71)*Math.sin(phase*Math.PI)*.42;return {...z,lane:Math.max(0,Math.min(1,stableLane+passing)),rank}}).sort((a,b)=>a.lane-b.lane).forEach(({h:horse,pos,lane,rank})=>{
     const spread=Math.max(1,order.length-1),progress=Math.max(0,Math.min(1,flowProgress)),finishRun=Math.max(0,(progress-.72)/.28),x=w*(.86-.70*rank/spread)+Math.sin(progress*9+Number(horse.horse)*1.7)*Math.min(4,w*.005)+finishRun*w*.30,y=h*(.51+lane*.36),size=Math.min(1,w/720)*(.56+lane*.28),frame=Number(horse.frame)||1,active=Number(selectedHorse)===Number(horse.horse);
+    // Ground-contact shadow and kick-up dust scale with perspective.
+    ctx.save();ctx.fillStyle='rgba(8,9,8,.26)';ctx.beginPath();ctx.ellipse(x-5*size,y+3*size,56*size,7*size,0,0,Math.PI*2);ctx.fill();
+    if(flowProgress>.02&&flowProgress<.995){for(let j=0;j<3;j++){let q=(t*.0007+j*.31+Number(horse.horse)*.13)%1;ctx.fillStyle='rgba(215,189,143,'+(.12*(1-q)).toFixed(3)+')';ctx.beginPath();ctx.ellipse(x-(28+q*75)*size,y-(4+q*14)*size,(3+q*9)*size,(2+q*5)*size,0,0,Math.PI*2);ctx.fill()}}ctx.restore();
     flowBodyHorse(ctx,x,y,size,frame,t*.0018+Number(horse.horse)*.17,active);
     const by=y-112*size;ctx.fillStyle=FLOW_FRAME_COLORS[Math.max(0,Math.min(7,frame-1))];ctx.beginPath();ctx.roundRect(x-13,by-12,26,24,5);ctx.fill();ctx.fillStyle=[1,5].includes(frame)?'#071521':'#fff';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText(String(horse.horse),x,by+5);
     if(active){const label=String(horse.name||horse.horse+'番');ctx.font='bold 12px system-ui';const width=Math.min(w-20,ctx.measureText(label).width+18),lx=Math.max(width/2+5,Math.min(w-width/2-5,x));ctx.fillStyle='#071720';ctx.fillRect(lx-width/2,y+8,width,22);ctx.fillStyle='#ffe49b';ctx.fillText(label,lx,y+23)}
