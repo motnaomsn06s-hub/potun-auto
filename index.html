@@ -360,7 +360,7 @@ function flowBackdrop(ctx,w,h,t){
     ctx.strokeStyle=`rgba(239,223,172,${alpha})`;ctx.lineWidth=lw;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y-18*u);ctx.stroke();
   }
   // finish marker approaching in last phase (visual marker, not an actual result)
-  if(flowProgress>.72){let alpha=Math.min(1,(flowProgress-.72)*5),xx=w*(.95+(1-flowProgress)*1.1);ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle='#e8dfb5';ctx.fillRect(xx,h*.45,3,h*.53);ctx.fillStyle='#081720';for(let row=0;row<9;row++)for(let col=0;col<2;col++)if((row+col)%2===0)ctx.fillRect(xx+col*6,h*.48+row*6,6,6);ctx.restore()}
+  if(flowProgress>.72){let alpha=Math.min(1,(flowProgress-.72)*5),xx=w*(.96-(flowProgress-.72)/.28*.96);ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle='#e8dfb5';ctx.fillRect(xx,h*.45,3,h*.53);ctx.fillStyle='#081720';for(let row=0;row<9;row++)for(let col=0;col<2;col++)if((row+col)%2===0)ctx.fillRect(xx+col*6,h*.48+row*6,6,6);ctx.restore()}
   let wash=ctx.createLinearGradient(0,0,0,h);wash.addColorStop(0,'rgba(1,8,14,.03)');wash.addColorStop(1,'rgba(1,8,14,.4)');ctx.fillStyle=wash;ctx.fillRect(0,0,w,h);
 }
 function flowLine(ctx,pts,color,width){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();pts.forEach((v,i)=>i?ctx.lineTo(v[0],v[1]):ctx.moveTo(v[0],v[1]));ctx.stroke()}
@@ -400,12 +400,13 @@ function flowBodyHorse(ctx,x,y,size,frame,gait,highlight){
 function drawFlowScene(t=0){let cv=$('flowCanvas'),rf=last?.race_flow;if(!cv||!rf?.horses?.length)return;let rc=cv.getBoundingClientRect(),w=Math.max(250,Math.floor(rc.width)),h=Math.max(240,Math.floor(rc.height));if(!w||!h)return;let dpr=Math.min(2,window.devicePixelRatio||1);if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}let ctx=cv.getContext('2d');if(!ctx)return;ctx.setTransform(dpr,0,0,dpr,0,0);flowBackdrop(ctx,w,h,t);
   const order=flowRanked(rf,flowProgress);flowHitBoxes=[];
   order.map(z=>{const no=Number(z.h.horse)||0,rank=Math.max(0,z.pos-1),phase=Math.max(0,Math.min(1,flowProgress));const stableLane=((no*7+Number(z.h.frame||1)*3)%7)/6;const passing=Math.sin(phase*Math.PI*2+no*.71)*Math.sin(phase*Math.PI)*.42;return {...z,lane:Math.max(0,Math.min(1,stableLane+passing)),rank}}).sort((a,b)=>a.lane-b.lane).forEach(({h:horse,pos,lane,rank})=>{
-    const spread=Math.max(1,order.length-1),progress=Math.max(0,Math.min(1,flowProgress)),x=w*(.86-.70*rank/spread)+Math.sin(progress*9+Number(horse.horse)*1.7)*Math.min(4,w*.005),y=h*(.51+lane*.36),size=Math.min(1,w/720)*(.56+lane*.28),frame=Number(horse.frame)||1,active=Number(selectedHorse)===Number(horse.horse);
+    const spread=Math.max(1,order.length-1),progress=Math.max(0,Math.min(1,flowProgress)),finishRun=Math.max(0,(progress-.72)/.28),x=w*(.86-.70*rank/spread)+Math.sin(progress*9+Number(horse.horse)*1.7)*Math.min(4,w*.005)+finishRun*w*.30,y=h*(.51+lane*.36),size=Math.min(1,w/720)*(.56+lane*.28),frame=Number(horse.frame)||1,active=Number(selectedHorse)===Number(horse.horse);
     flowBodyHorse(ctx,x,y,size,frame,t*.0018+Number(horse.horse)*.17,active);
     const by=y-112*size;ctx.fillStyle=FLOW_FRAME_COLORS[Math.max(0,Math.min(7,frame-1))];ctx.beginPath();ctx.roundRect(x-13,by-12,26,24,5);ctx.fill();ctx.fillStyle=[1,5].includes(frame)?'#071521':'#fff';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText(String(horse.horse),x,by+5);
     if(active){const label=String(horse.name||horse.horse+'番');ctx.font='bold 12px system-ui';const width=Math.min(w-20,ctx.measureText(label).width+18),lx=Math.max(width/2+5,Math.min(w-width/2-5,x));ctx.fillStyle='#071720';ctx.fillRect(lx-width/2,y+8,width,22);ctx.fillStyle='#ffe49b';ctx.fillText(label,lx,y+23)}
     ctx.textAlign='left';flowHitBoxes.push({horse:Number(horse.horse),x,y:y-45*size,w:Math.max(19,60*size),h:Math.max(38,120*size)})
   });
+  if(flowProgress>=.995){ctx.fillStyle='rgba(2,13,22,.84)';ctx.fillRect(0,h*.36,w,h*.22);ctx.textAlign='center';ctx.fillStyle='#f5d78c';ctx.font=`900 ${Math.max(23,Math.min(44,w*.055))}px system-ui`;ctx.fillText('FINISH  /  想定ゴール',w/2,h*.45);ctx.fillStyle='#d3e7ed';ctx.font='bold 13px system-ui';ctx.fillText('予測演出です。実際の着順ではありません',w/2,h*.52);ctx.textAlign='left'}
   let v=ctx.createLinearGradient(0,0,w,0);v.addColorStop(0,'rgba(1,9,15,.23)');v.addColorStop(.2,'transparent');v.addColorStop(1,'rgba(1,9,15,.18)');ctx.fillStyle=v;ctx.fillRect(0,0,w,h);
   ctx.fillStyle='rgba(4,14,22,.89)';ctx.beginPath();ctx.roundRect(10,10,Math.min(165,w*.47),38,8);ctx.fill();ctx.fillStyle='#e6d18d';ctx.font='bold 12px system-ui';ctx.fillText('RACE FLOW  /  '+(flowPhaseInfo(flowProgress,rf).title||'START'),20,26);ctx.fillStyle='#b3c8d3';ctx.font='10px system-ui';ctx.fillText('PREDICTED • NOT LIVE',20,40);
 }
