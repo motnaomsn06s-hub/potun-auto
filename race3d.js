@@ -93,9 +93,21 @@ function setAtmosphere(d){
  const cv=document.createElement('canvas');cv.width=16;cv.height=512;const c=cv.getContext('2d'),g=c.createLinearGradient(0,0,0,512);g.addColorStop(0,night?'#06162f':sunset?'#493d70':'#527f9d');g.addColorStop(.43,night?'#22466d':sunset?'#d47880':'#95b8c7');g.addColorStop(.51,night?'#597589':sunset?'#ffd49a':'#dae0ca');g.addColorStop(1,night?'#122a35':'#798064');c.fillStyle=g;c.fillRect(0,0,16,512);const tx=new T.CanvasTexture(cv);tx.mapping=T.EquirectangularReflectionMapping;tx.colorSpace=T.SRGBColorSpace;scene.background?.dispose?.();scene.background=tx;scene.fog.color.set(night?0x456278:sunset?0xba9989:0xb2c4c2);scene.fog.near=95;scene.fog.far=320;
  hemi.color.set(night?0xb0d2ff:sunset?0xf4c7ac:0xd8e8f3);hemi.groundColor.set(night?0x314651:0x6c5540);hemi.intensity=night?2.3:2.0;sun.color.set(night?0xcfe5ff:sunset?0xffb777:0xffdfb2);sun.intensity=night?2.7:sunset?3.2:3;sun.position.set(-55,sunset?25:70,40);renderer.toneMappingExposure=night?1.12:1.18;if(glowMaterial)glowMaterial.opacity=night?1:sunset?.9:.4;
 }
+// Venue direction is authoritative when the prediction payload omits course metadata.
+const LEFT_NAR=/盛岡|水沢|浦和|船橋|川崎|名古屋|笠松|金沢/;
+const RIGHT_NAR=/門別|帯広|大井|園田|姫路|高知|佐賀/;
+function resolveDirection(d){
+ const rf=d.race_flow||{},course=rf.course||{},race=d.race||{};
+ const raw=[race.venue,race.track,race.course,race.racecourse,race.place,race.name,race.race_key,d.race_key].filter(v=>typeof v==='string').join(' ');
+ if(LEFT_NAR.test(raw))return -1;
+ if(RIGHT_NAR.test(raw))return 1;
+ if(course.direction==='left'||course.direction==='左'||course.direction==='左回り')return -1;
+ if(course.direction==='right'||course.direction==='右'||course.direction==='右回り')return 1;
+ return null;
+}
 function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.mode===mode)));const play=ui.querySelector('#r3-play');play.textContent=d.playing?'Ⅱ 一時停止':(+d.progress>=.995?'↻ もう一度再生':+d.progress>0?'▶ 続きから再生':'▶ ゲートから再生');play.classList.toggle('running',!!d.playing||+d.progress>0);
  if(lastRaceKey!==d.race_key){directionOverride=null;moodOverride=null;lastRaceKey=d.race_key}const rf=d.race_flow,t=clamp(+d.progress||0,0,1),rp=clamp((t-.08)/.92,0,1),p=(rp<.03?rp*rp/.06:rp-.015)/.985,w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;const key=JSON.stringify(rf.horses.map(h=>[h.horse,h.frame,h.name]));if(key!==sourceKey){rebuild(rf);sourceKey=key}
- setAtmosphere(d);const dir=directionOverride||(rf.course?.direction==='left'?-1:1),ck=dir+':'+(rf.course?.surface||'dirt');if(ck!==courseKey){direction=dir;buildCourse();courseKey=ck}
+ setAtmosphere(d);const verifiedDirection=resolveDirection(d),dir=directionOverride??verifiedDirection??1,ck=dir+':'+(rf.course?.surface||'dirt');if(ck!==courseKey){direction=dir;buildCourse();courseKey=ck}
  const gk=key+':'+dir;if(gk!==gateKey){buildGate();gateKey=gk}const gateOpen=clamp((t-.045)/.025,0,1);doors.forEach(({pivot,side})=>pivot.rotation.y=-side*gateOpen*Math.PI*.49);
  const cameraButton=document.getElementById('r3-direction');if(cameraButton)cameraButton.textContent=directionOverride!==null?(direction===1?'右回り':'左回り')+'（手動）':rf.course?.direction?(direction===1?'右回り':'左回り')+'（自動）':'方向未取得（仮表示）';
  if(canvas.width!==Math.floor(w*renderer.getPixelRatio())||canvas.height!==Math.floor(h*renderer.getPixelRatio()))renderer.setSize(w,h,false);camera.aspect=w/h;camera.fov=w<h?54:42;camera.updateProjectionMatrix();
