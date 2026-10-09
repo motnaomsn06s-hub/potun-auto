@@ -185,13 +185,13 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
   const railSide=direction===-1?-1:1;
   // Wider orbit: from outer rail, across the front of the pack, then to the opposite rail.
   // Keep the camera ahead of the horses until the finish sweep to avoid crossing through models.
-  const orbit=smooth((p-.755)/.17);
-  const sideOffset=(w<h?35:46)*(1-orbit)-((w<h?30:42)*orbit);
+  const orbit=smooth((p-.745)/.185);
+  const sideOffset=(w<h?41:56)*(1-orbit)-((w<h?39:55)*orbit);
   const frontal=center.clone().addScaledVector(tangent,ahead+6*(1-orbit)).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,6.8-1.8*headOn,0));
   const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
   // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
   const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
-  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?48:62)).add(new T.Vector3(0,9.5,0));
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?57:74)).add(new T.Vector3(0,9.5,0));
   frontal.lerp(finishCamera,finishSweep);
   frontalLook.lerp(finishFocus,finishSweep);
   camera.position.lerp(frontal,intro);
@@ -199,6 +199,20 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  }
  if(t<.16&&mode!==2){const gateAt=pathAt(START,7.5),gcenter=new T.Vector3(gateAt.x,1.2,gateAt.z),gpos=gcenter.clone().addScaledVector(tangent,14).addScaledVector(outward,9).add(new T.Vector3(0,6,0)),blend=clamp((t-.10)/.06,0,1);camera.position.lerp(gpos,1-blend);camera.lookAt(look.clone().lerp(gcenter,1-blend))}
  renderer.render(scene,camera);const occupied=[];for(const {m} of ranks){const u=m.userData,v=new T.Vector3(0,2.45,0).applyMatrix4(m.matrixWorld).project(camera),x=(v.x*.5+.5)*w,y=(-v.y*.5+.5)*h,active=+d.selected===+u.h.horse;const inFrame=v.z<1&&x>12&&x<w-12&&y>60&&y<h-42;u.label.hidden=t<.10||!inFrame||mode===3||(mode===1&&m!==focus&&m.position.distanceTo(focus.position)>11);let lx=x,ly=y;for(const [dx,dy] of [[0,0],[-18,-26],[18,-26],[-32,-52],[0,-52],[32,-52],[-18,-78],[18,-78],[0,-104]]){const cx=clamp(x+dx,16,w-16),cy=Math.max(105,y+dy);lx=cx;ly=cy;if(!occupied.some(o=>Math.abs(o.x-cx)<28&&Math.abs(o.y-cy)<27))break}occupied.push({x:lx,y:ly});u.label.style.setProperty('--stem',Math.max(0,y-ly)+'px');u.label.style.transform=`translate(${lx}px,${ly}px) translate(-50%,-100%)`;u.label.classList.toggle('selected',active);u.label.title=u.h.horse+'番 '+(u.h.name||'');}
+ // Camera-visible broadcast boards: independent of perspective/frustum and 3D occlusion.
+ let board=ui.querySelector('#r3-broadcast-board');
+ if(!board){
+  board=document.createElement('div');board.id='r3-broadcast-board';
+  board.style.cssText='position:absolute;top:42%;right:2%;z-index:30;pointer-events:none;display:none;min-width:78px;padding:10px 12px;background:rgba(247,247,241,.94);color:#142b32;border:3px solid #174754;border-radius:4px;box-shadow:0 6px 22px #0009;text-align:center;font:900 24px/1.2 system-ui,sans-serif;letter-spacing:.02em';
+  ui.appendChild(board);
+ }
+ const metresLeft=Math.max(0,Number(rf.course?.distance||d.race?.distance||1400)*(1-clamp(p/FINISH_AT,0,1)));
+ let boardText='';
+ if(p>=.94)boardText='GOAL';
+ else if(p>=.75){const mark=Math.ceil(metresLeft/200)*200;if(mark>=200&&mark<=1200)boardText=mark+'m'}
+ else if(p>=.62)boardText='4角';
+ else if(p>=.48)boardText='3角';
+ board.textContent=boardText;board.style.display=boardText?'block':'none';
  const stage=t<.045?'ゲート内・発走準備':t<.08?'ゲート開放':p>=FINISH_AT?'ゴール前':p<.18?'スタート':p<.48?'向正面':p<.76?'コーナー':'最後の直線';ui.querySelector('#r3-stage').textContent=(finished===models.length?'全頭ゴール':stage)+(p>=.74&&p<FINISH_AT?' · 残り'+Math.max(0,Math.round((Number(rf.course?.distance||d.race?.distance||1400)*(1-p/FINISH_AT))/100)*100)+'m':p>=FINISH_AT?' · GOAL':'')+(mode===3?' · 注目 '+focus.userData.h.horse+'番':'');
  ui.querySelector('#r3-finish').textContent=finished?`ゴール通過 ${finished} / ${models.length}頭`:'';const raceWeather=[d.race?.weather,d.race?.tenki,rf.course?.weather].find(v=>typeof v==='string'&&v.trim());const raceGoing=[d.race?.track_condition,d.race?.going,rf.course?.condition].find(v=>typeof v==='string'&&v.trim());const oiProfile=courseProfile==='oi-1400-outer-right';ui.querySelector('#r3-course').textContent=(oiProfile?'大井外1400m・4角→直線386m基準':'競馬場の形状は模式')+' · '+(direction===-1?'右':'左')+'回り';ui.querySelector('#r3-raceinfo').textContent=['3D展開予想',raceWeather?'天候 '+raceWeather:'天候データなし',raceGoing?'馬場 '+raceGoing:'',oiProfile?'大井外回りの距離基準':'コース形状は模式'].filter(Boolean).join(' / ');const race=d.race||{};ui.querySelector('#r3-racename').textContent=race.baba_name&&race.race?race.baba_name+' '+race.race+'R':'展開シミュレーション';const start=race.start_iso?new Date(race.start_iso).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'}):'';ui.querySelector('#r3-racedetail').textContent=[start?start+' 発走':'',rf.course?.distance?rf.course.distance+'m':'',direction===-1?'右回り':'左回り'].filter(Boolean).join(' · ');ui.querySelector('#r3-remaining').textContent=rf.course?.distance?Math.max(0,Math.round(rf.course.distance*(1-clamp(p/FINISH_AT,0,1))/10)*10)+'m':'—';ui.querySelector('#r3-pace').textContent=rf.label||rf.pace||'想定ペース';
  window.__race3dDebug={version:'cinema-7',horses:models.length,finished,progress:t,raceProgress:p,gateOpen,gateStalls:models.length,start:START,direction,mode,atmosphere,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,positions:models.map(m=>({horse:+m.userData.h.horse,distance:m.userData.distance,x:m.position.x,z:m.position.z})),finish:FINISH};
