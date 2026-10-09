@@ -49,31 +49,29 @@ function horse(h,index){
 function pathAt(s,lane=0){s=((s%PERIMETER)+PERIMETER)%PERIMETER;let x,z,tx,tz;if(s<2*L){x=-L+s;z=R;tx=1;tz=0}else if(s<2*L+Math.PI*R){const a=Math.PI/2-(s-2*L)/R;x=L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}else if(s<4*L+Math.PI*R){x=L-(s-2*L-Math.PI*R);z=-R;tx=-1;tz=0}else{const a=-Math.PI/2-(s-4*L-Math.PI*R)/R;x=-L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}return {x:x-tz*lane,z:(z+tx*lane)*direction,tx,tz:tz*direction}}
 function trackRibbon(inner,outer,m){const vertices=[],uvs=[],indices=[],steps=380;for(let i=0;i<=steps;i++){for(const lane of [inner,outer]){const p=pathAt(i/steps*PERIMETER,lane);vertices.push(p.x,.008,p.z);uvs.push(p.x/180,p.z/120)}}for(let i=0;i<steps;i++){const a=i*2;indices.push(a,a+1,a+2,a+1,a+3,a+2)}const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(vertices,3));g.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));g.setIndex(indices);g.computeVertexNormals();m.side=T.DoubleSide;const mesh=new T.Mesh(g,m);mesh.receiveShadow=true;world.add(mesh)}
 function makeTexture(){const cv=document.createElement('canvas');cv.width=cv.height=256;const ctx=cv.getContext('2d');ctx.fillStyle='#a38964';ctx.fillRect(0,0,256,256);let seed=919;for(let i=0;i<9500;i++){seed=(seed*16807)%2147483647;const x=seed%256;seed=(seed*16807)%2147483647;const y=seed%256;ctx.fillStyle=i%2?'rgba(39,26,18,.13)':'rgba(239,220,181,.18)';ctx.fillRect(x,y,1.5,1)}const t=new T.CanvasTexture(cv);t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(90,70);return t}
+function markerDisc(text){
+ const canvas=document.createElement('canvas');canvas.width=256;canvas.height=256;
+ const c=canvas.getContext('2d');c.clearRect(0,0,256,256);
+ c.beginPath();c.arc(128,128,111,0,Math.PI*2);c.fillStyle='#f6f3ec';c.fill();c.lineWidth=13;c.strokeStyle='#aa2e36';c.stroke();
+ c.font='900 142px sans-serif';c.textAlign='center';c.textBaseline='middle';c.fillStyle='#a51f2a';c.fillText(text,128,138);
+ const t=new T.CanvasTexture(canvas);t.colorSpace=T.SRGBColorSpace;return t;
+}
 function addCourseMarkers(){
- const course=window.__oddsRace3dData?.race_flow?.course||{};
- const race=window.__oddsRace3dData?.race||{};
+ const course=window.__oddsRace3dData?.race_flow?.course||{},race=window.__oddsRace3dData?.race||{};
  const total=Number(course.distance||race.distance||1400);
  if(!Number.isFinite(total)||total<400)return;
  const side=direction===-1?1:-1;
- const marks=[200,400,600,800,1000,1200].filter(m=>m<total);
- for(const metres of marks){
-  const at=pathAt(FINISH-(metres/total)*TRAVEL,side>0?12:2);
-  const g=new T.Group();g.position.set(at.x,0,at.z);
-  const pole=mat(0xe4e6e2,.56),base=mat(0x263b3d,.8);
-  block(g,0,3.3,0,.24,6.6,.24,pole);
-  block(g,0,.13,0,.7,.26,.7,base);
-  const texture=labelTexture(String(metres)+'m','#ffffff','#142d35');
-  const sign=new T.Mesh(new T.PlaneGeometry(5.2,1.35),new T.MeshBasicMaterial({map:texture,side:T.DoubleSide,transparent:false}));
-  sign.position.set(0,6.05,0);sign.rotation.y=-Math.atan2(at.tz,at.tx)+Math.PI/2;
-  g.add(sign);world.add(g);
+ const post=(at,text)=>{
+  const group=new T.Group();group.position.set(at.x,0,at.z);
+  for(let i=0;i<7;i++)block(group,0,.5+i*.75,0,.23,.75,.23,mat(i%2?0xf2f0e9:0xa63138));
+  const disc=new T.Mesh(new T.CircleGeometry(1.25,48),new T.MeshBasicMaterial({map:markerDisc(text),transparent:true,side:T.DoubleSide,depthTest:false}));
+  disc.position.set(0,6.0,0);disc.rotation.y=-Math.atan2(at.tz,at.tx)+Math.PI/2;disc.renderOrder=15;group.add(disc);world.add(group);
+ };
+ for(const metres of [200,400,600,800,1000,1200].filter(m=>m<total)){
+  post(pathAt(FINISH-(metres/total)*TRAVEL,side>0?17:-3),String(metres/100));
  }
- // Corner labels are schematic until venue-specific surveyed geometry is available.
- for(const [fraction,name] of [[.48,'3 CORNER'],[.68,'4 CORNER']]){
-  const at=pathAt(START+fraction*TRAVEL,side>0?12:2);
-  const g=new T.Group();g.position.set(at.x,0,at.z);
-  block(g,0,3.1,0,.22,6.2,.22,mat(0xd7dce0));
-  const sign=new T.Mesh(new T.PlaneGeometry(5.2,1.35),new T.MeshBasicMaterial({map:labelTexture(name,'#17353d','#ffffff'),side:T.DoubleSide}));
-  sign.position.y=5.8;sign.rotation.y=-Math.atan2(at.tz,at.tx)+Math.PI/2;g.add(sign);world.add(g);
+ for(const [fraction,num] of [[.48,'3'],[.68,'4']]){
+  post(pathAt(START+fraction*TRAVEL,side>0?17:-3),num);
  }
 }
 function buildCourse(){halos=[];if(world){scene.remove(world);disposeGroup(world)}world=new T.Group();scene.add(world);const conditions=raceConditions(window.__oddsRace3dData||{});const field=mat(0x354b2d,.97),dirt=new T.MeshStandardMaterial({color:conditions.wet?0x715744:0xae9270,roughness:conditions.wet?.67:.96,map:makeTexture(),side:T.DoubleSide});const ground=new T.Mesh(new T.PlaneGeometry(700,700),field);ground.rotation.x=-Math.PI/2;ground.position.y=-.02;ground.receiveShadow=true;world.add(ground);trackRibbon(-1,15,dirt);trackRibbon(-2,-1,mat(0x7b815a));
@@ -185,13 +183,13 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
   const railSide=direction===-1?-1:1;
   // Wider orbit: from outer rail, across the front of the pack, then to the opposite rail.
   // Keep the camera ahead of the horses until the finish sweep to avoid crossing through models.
-  const orbit=smooth((p-.745)/.185);
-  const sideOffset=(w<h?41:56)*(1-orbit)-((w<h?39:55)*orbit);
+  const orbit=smooth((p-.755)/.155);
+  const sideOffset=(w<h?24:34)*(1-orbit)-((w<h?26:36)*orbit);
   const frontal=center.clone().addScaledVector(tangent,ahead+6*(1-orbit)).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,6.8-1.8*headOn,0));
   const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
   // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
   const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
-  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?57:74)).add(new T.Vector3(0,9.5,0));
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?28:39)).add(new T.Vector3(0,9.5,0));
   frontal.lerp(finishCamera,finishSweep);
   frontalLook.lerp(finishFocus,finishSweep);
   camera.position.lerp(frontal,intro);
@@ -203,7 +201,7 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  let board=ui.querySelector('#r3-broadcast-board');
  if(!board){
   board=document.createElement('div');board.id='r3-broadcast-board';
-  board.style.cssText='position:absolute;top:42%;right:2%;z-index:30;pointer-events:none;display:none;min-width:78px;padding:10px 12px;background:rgba(247,247,241,.94);color:#142b32;border:3px solid #174754;border-radius:4px;box-shadow:0 6px 22px #0009;text-align:center;font:900 24px/1.2 system-ui,sans-serif;letter-spacing:.02em';
+  board.style.cssText='position:absolute;bottom:13%;left:3%;z-index:30;pointer-events:none;display:none;padding:7px 15px;background:linear-gradient(105deg,rgba(24,32,39,.93),rgba(34,41,46,.85));color:#fff;border-left:5px solid #dc3e41;border-radius:5px;box-shadow:0 4px 15px #0006;text-align:center;font:900 21px/1.2 system-ui,sans-serif;letter-spacing:.02em';
   ui.appendChild(board);
  }
  const metresLeft=Math.max(0,Number(rf.course?.distance||d.race?.distance||1400)*(1-clamp(p/FINISH_AT,0,1)));
@@ -212,7 +210,7 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  else if(p>=.75){const mark=Math.ceil(metresLeft/200)*200;if(mark>=200&&mark<=1200)boardText=mark+'m'}
  else if(p>=.62)boardText='4角';
  else if(p>=.48)boardText='3角';
- board.textContent=boardText;board.style.display=boardText?'block':'none';
+ board.textContent=/^\\d+m$/.test(boardText)?'残り '+boardText:boardText;board.style.display=boardText?'block':'none';
  const stage=t<.045?'ゲート内・発走準備':t<.08?'ゲート開放':p>=FINISH_AT?'ゴール前':p<.18?'スタート':p<.48?'向正面':p<.76?'コーナー':'最後の直線';ui.querySelector('#r3-stage').textContent=(finished===models.length?'全頭ゴール':stage)+(p>=.74&&p<FINISH_AT?' · 残り'+Math.max(0,Math.round((Number(rf.course?.distance||d.race?.distance||1400)*(1-p/FINISH_AT))/100)*100)+'m':p>=FINISH_AT?' · GOAL':'')+(mode===3?' · 注目 '+focus.userData.h.horse+'番':'');
  ui.querySelector('#r3-finish').textContent=finished?`ゴール通過 ${finished} / ${models.length}頭`:'';const raceWeather=[d.race?.weather,d.race?.tenki,rf.course?.weather].find(v=>typeof v==='string'&&v.trim());const raceGoing=[d.race?.track_condition,d.race?.going,rf.course?.condition].find(v=>typeof v==='string'&&v.trim());const oiProfile=courseProfile==='oi-1400-outer-right';ui.querySelector('#r3-course').textContent=(oiProfile?'大井外1400m・4角→直線386m基準':'競馬場の形状は模式')+' · '+(direction===-1?'右':'左')+'回り';ui.querySelector('#r3-raceinfo').textContent=['3D展開予想',raceWeather?'天候 '+raceWeather:'天候データなし',raceGoing?'馬場 '+raceGoing:'',oiProfile?'大井外回りの距離基準':'コース形状は模式'].filter(Boolean).join(' / ');const race=d.race||{};ui.querySelector('#r3-racename').textContent=race.baba_name&&race.race?race.baba_name+' '+race.race+'R':'展開シミュレーション';const start=race.start_iso?new Date(race.start_iso).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'}):'';ui.querySelector('#r3-racedetail').textContent=[start?start+' 発走':'',rf.course?.distance?rf.course.distance+'m':'',direction===-1?'右回り':'左回り'].filter(Boolean).join(' · ');ui.querySelector('#r3-remaining').textContent=rf.course?.distance?Math.max(0,Math.round(rf.course.distance*(1-clamp(p/FINISH_AT,0,1))/10)*10)+'m':'—';ui.querySelector('#r3-pace').textContent=rf.label||rf.pace||'想定ペース';
  window.__race3dDebug={version:'cinema-7',horses:models.length,finished,progress:t,raceProgress:p,gateOpen,gateStalls:models.length,start:START,direction,mode,atmosphere,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,positions:models.map(m=>({horse:+m.userData.h.horse,distance:m.userData.distance,x:m.position.x,z:m.position.z})),finish:FINISH};
