@@ -127,6 +127,18 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  if(mode===3){const f=focus.position.clone(),at=pathAt(focus.userData.distance,0),side=new T.Vector3(-at.tz,0,at.tx),forward=new T.Vector3(at.tx,0,at.tz);camera.position.copy(f).addScaledVector(side,w<h?12:17).addScaledVector(forward,2.4).add(new T.Vector3(0,3.15,0));camera.lookAt(f.addScaledVector(forward,1.8).add(new T.Vector3(0,1.2,0)))}else if(mode===2){camera.position.copy(center).addScaledVector(outward,22).add(new T.Vector3(0,43,0));camera.lookAt(look)}else if(mode===1){const f=focus.position.clone();camera.position.copy(f).addScaledVector(tangent,-10).addScaledVector(outward,11).add(new T.Vector3(0,7,0));camera.lookAt(f.lerp(center,.45).add(new T.Vector3(0,1.25,0)))}else{
   const spread=Math.max(12,...positions.map(v=>v.distanceTo(center)*2)),distance=(w<h?1.32:1.05)*spread+6;camera.position.copy(center).addScaledVector(outward,distance*1.3).addScaledVector(tangent,-distance*(w<h?.35:.2)).add(new T.Vector3(0,10+spread*.35,0));camera.lookAt(look);
  }
+ // Broadcast finish-straight camera: look back at the approaching field from ahead of the leader.
+ // Only engage when the field is on the final straight; keep user-selected camera modes intact.
+ if(mode===0&&p>.78){
+  const k=clamp((p-.78)/.065,0,1),blend=k*k*(3-2*k);
+  const remaining=Number(rf.course?.distance||1400)*Math.max(0,1-p/FINISH_AT);
+  const ahead=remaining>90?26:remaining>25?19:14;
+  const broadcastPos=center.clone().addScaledVector(tangent,ahead).addScaledVector(outward,w<h?4.5:7).add(new T.Vector3(0,w<h?5.5:6.5,0));
+  const broadcastLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.4,0));
+  camera.position.lerp(broadcastPos,blend);
+  const blendedTarget=look.clone().lerp(broadcastLook,blend);
+  camera.lookAt(blendedTarget);
+ }
  if(t<.16&&mode!==2){const gateAt=pathAt(START,7.5),gcenter=new T.Vector3(gateAt.x,1.2,gateAt.z),gpos=gcenter.clone().addScaledVector(tangent,14).addScaledVector(outward,9).add(new T.Vector3(0,6,0)),blend=clamp((t-.10)/.06,0,1);camera.position.lerp(gpos,1-blend);camera.lookAt(look.clone().lerp(gcenter,1-blend))}
  renderer.render(scene,camera);const occupied=[];for(const {m} of ranks){const u=m.userData,v=new T.Vector3(0,2.45,0).applyMatrix4(m.matrixWorld).project(camera),x=(v.x*.5+.5)*w,y=(-v.y*.5+.5)*h,active=+d.selected===+u.h.horse;const inFrame=v.z<1&&x>12&&x<w-12&&y>60&&y<h-42;u.label.hidden=t<.10||!inFrame||mode===3||(mode===1&&m!==focus&&m.position.distanceTo(focus.position)>11);let lx=x,ly=y;for(const [dx,dy] of [[0,0],[-18,-26],[18,-26],[-32,-52],[0,-52],[32,-52],[-18,-78],[18,-78],[0,-104]]){const cx=clamp(x+dx,16,w-16),cy=Math.max(105,y+dy);lx=cx;ly=cy;if(!occupied.some(o=>Math.abs(o.x-cx)<28&&Math.abs(o.y-cy)<27))break}occupied.push({x:lx,y:ly});u.label.style.setProperty('--stem',Math.max(0,y-ly)+'px');u.label.style.transform=`translate(${lx}px,${ly}px) translate(-50%,-100%)`;u.label.classList.toggle('selected',active);u.label.title=u.h.horse+'番 '+(u.h.name||'');}
  const stage=t<.045?'ゲート内・発走準備':t<.08?'ゲート開放':p>=FINISH_AT?'ゴール前':p<.18?'スタート':p<.48?'向正面':p<.76?'コーナー':'最後の直線';ui.querySelector('#r3-stage').textContent=(finished===models.length?'全頭ゴール':stage)+(mode===3?' · 注目 '+focus.userData.h.horse+'番':'');
