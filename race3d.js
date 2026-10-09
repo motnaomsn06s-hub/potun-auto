@@ -147,12 +147,15 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
   const ahead=remaining>150?31:remaining>60?24:remaining>15?19:15;
   // Negative outward keeps the inside rail behind the field in a right-hand final straight.
   const railSide=direction===-1?-1:1;
-  const sideOffset=(w<h?13:18)*(1-headOn)+(w<h?3.5:5)*headOn;
-  const frontal=center.clone().addScaledVector(tangent,ahead).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,headOn?5.1:6.6,0));
+  // Wider orbit: from outer rail, across the front of the pack, then to the opposite rail.
+  // Keep the camera ahead of the horses until the finish sweep to avoid crossing through models.
+  const orbit=smooth((p-.78)/.145);
+  const sideOffset=(w<h?23:31)*(1-orbit)-((w<h?11:16)*orbit);
+  const frontal=center.clone().addScaledVector(tangent,ahead+6*(1-orbit)).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,6.8-1.8*headOn,0));
   const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
   // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
   const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
-  const finishCamera=finishFocus.clone().addScaledVector(tangent,1.5).addScaledVector(outward,railSide*(w<h?27:33)).add(new T.Vector3(0,8.5,0));
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?30:39)).add(new T.Vector3(0,9.5,0));
   frontal.lerp(finishCamera,finishSweep);
   frontalLook.lerp(finishFocus,finishSweep);
   camera.position.lerp(frontal,intro);
