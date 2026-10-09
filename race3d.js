@@ -109,7 +109,7 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  if(lastRaceKey!==d.race_key){directionOverride=null;moodOverride=null;lastRaceKey=d.race_key}const rf=d.race_flow,t=clamp(+d.progress||0,0,1),rp=clamp((t-.08)/.92,0,1),p=(rp<.03?rp*rp/.06:rp-.015)/.985,w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;const key=JSON.stringify(rf.horses.map(h=>[h.horse,h.frame,h.name]));if(key!==sourceKey){rebuild(rf);sourceKey=key}
  setAtmosphere(d);const verifiedDirection=resolveDirection(d),dir=directionOverride??verifiedDirection??1,ck=dir+':'+(rf.course?.surface||'dirt');if(ck!==courseKey){direction=dir;buildCourse();courseKey=ck}
  const gk=key+':'+dir;if(gk!==gateKey){buildGate();gateKey=gk}const gateOpen=clamp((t-.045)/.025,0,1);doors.forEach(({pivot,side})=>pivot.rotation.y=-side*gateOpen*Math.PI*.49);
- const cameraButton=document.getElementById('r3-direction');if(cameraButton)cameraButton.textContent=directionOverride!==null?(direction===1?'右回り':'左回り')+'（手動）':rf.course?.direction?(direction===1?'右回り':'左回り')+'（自動）':'方向未取得（仮表示）';
+ const cameraButton=document.getElementById('r3-direction');if(cameraButton)cameraButton.textContent=(direction===1?'右回り':'左回り')+(directionOverride!==null?'（手動）':verifiedDirection!==null?'（競馬場判定）':'（方向未確認・仮表示）');
  if(canvas.width!==Math.floor(w*renderer.getPixelRatio())||canvas.height!==Math.floor(h*renderer.getPixelRatio()))renderer.setSize(w,h,false);camera.aspect=w/h;camera.fov=w<h?54:42;camera.updateProjectionMatrix();
  models.forEach(m=>{m.userData.h=rf.horses.find(h=>+h.horse===+m.userData.h.horse)||m.userData.h});
  const ranks=models.map(m=>({m,pos:relative(m.userData.h,p)})).sort((a,b)=>a.pos-b.pos||+a.m.userData.h.horse-+b.m.userData.h.horse),best=ranks[0]?.pos||1;
