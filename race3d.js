@@ -7,7 +7,7 @@ let gate,gateKey="",lastRaceKey=null,doors=[],gateSpan=14;
 let T,scene,camera,renderer,host,canvas,world,herd,models=[],labels,ui,sourceKey='',courseKey='',raf=0,lastPaint='',mode=0,direction=1,directionOverride=null,ready=false,loading=false,disposed=false;
 const L=48,R=27,PERIMETER=4*L+2*Math.PI*R,FINISH_AT=.94;
 let FINISH=L*1.5,TRAVEL=(PERIMETER-(2*L+Math.PI*R+20)+FINISH)/FINISH_AT,START=FINISH-FINISH_AT*TRAVEL;
-function configureRaceCourse(d){const race=d.race||{},rf=d.race_flow||{};const venue=[race.venue,race.name,d.race_key].filter(x=>typeof x==='string').join(' ');const distance=Number(race.distance||rf.course?.distance||0);if(/大井/.test(venue)&&distance===1400){FINISH=2*L+Math.PI*R+PERIMETER*386/1600;TRAVEL=PERIMETER*1400/1600/FINISH_AT;START=FINISH-FINISH_AT*TRAVEL;return 'oi-1400-outer-right'}FINISH=L*1.5;TRAVEL=(PERIMETER-(2*L+Math.PI*R+20)+FINISH)/FINISH_AT;START=FINISH-FINISH_AT*TRAVEL;return 'schematic'}
+function configureRaceCourse(d){const race=d.race||{},rf=d.race_flow||{};const venue=[race.venue,race.name,d.race_key].filter(x=>typeof x==='string').join(' ');const distance=Number(race.distance||rf.course?.distance||0);if(/大井/.test(venue)&&distance===1400){FINISH=PERIMETER+PERIMETER*386/1600;TRAVEL=PERIMETER*1400/1600/FINISH_AT;START=FINISH-FINISH_AT*TRAVEL;return 'oi-1400-outer-right'}FINISH=L*1.5;TRAVEL=(PERIMETER-(2*L+Math.PI*R+20)+FINISH)/FINISH_AT;START=FINISH-FINISH_AT*TRAVEL;return 'schematic'}
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const mats=new Map(),geo={};
 function mat(color,roughness=.7,metalness=0){const key=[color,roughness,metalness].join(':');if(!mats.has(key))mats.set(key,new T.MeshStandardMaterial({color,roughness,metalness}));return mats.get(key)}
