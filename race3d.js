@@ -49,8 +49,36 @@ function horse(h,index){
 function pathAt(s,lane=0){s=((s%PERIMETER)+PERIMETER)%PERIMETER;let x,z,tx,tz;if(s<2*L){x=-L+s;z=R;tx=1;tz=0}else if(s<2*L+Math.PI*R){const a=Math.PI/2-(s-2*L)/R;x=L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}else if(s<4*L+Math.PI*R){x=L-(s-2*L-Math.PI*R);z=-R;tx=-1;tz=0}else{const a=-Math.PI/2-(s-4*L-Math.PI*R)/R;x=-L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}return {x:x-tz*lane,z:(z+tx*lane)*direction,tx,tz:tz*direction}}
 function trackRibbon(inner,outer,m){const vertices=[],uvs=[],indices=[],steps=380;for(let i=0;i<=steps;i++){for(const lane of [inner,outer]){const p=pathAt(i/steps*PERIMETER,lane);vertices.push(p.x,.008,p.z);uvs.push(p.x/180,p.z/120)}}for(let i=0;i<steps;i++){const a=i*2;indices.push(a,a+1,a+2,a+1,a+3,a+2)}const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(vertices,3));g.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));g.setIndex(indices);g.computeVertexNormals();m.side=T.DoubleSide;const mesh=new T.Mesh(g,m);mesh.receiveShadow=true;world.add(mesh)}
 function makeTexture(){const cv=document.createElement('canvas');cv.width=cv.height=256;const ctx=cv.getContext('2d');ctx.fillStyle='#a38964';ctx.fillRect(0,0,256,256);let seed=919;for(let i=0;i<9500;i++){seed=(seed*16807)%2147483647;const x=seed%256;seed=(seed*16807)%2147483647;const y=seed%256;ctx.fillStyle=i%2?'rgba(39,26,18,.13)':'rgba(239,220,181,.18)';ctx.fillRect(x,y,1.5,1)}const t=new T.CanvasTexture(cv);t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(90,70);return t}
+function addCourseMarkers(){
+ const course=window.__oddsRace3dData?.race_flow?.course||{};
+ const race=window.__oddsRace3dData?.race||{};
+ const total=Number(course.distance||race.distance||1400);
+ if(!Number.isFinite(total)||total<400)return;
+ const side=direction===-1?1:-1;
+ const marks=[200,400,600,800,1000,1200].filter(m=>m<total);
+ for(const metres of marks){
+  const at=pathAt(FINISH-(metres/total)*TRAVEL,side>0?19:-5);
+  const g=new T.Group();g.position.set(at.x,0,at.z);
+  const pole=mat(0xe4e6e2,.56),base=mat(0x263b3d,.8);
+  block(g,0,2.35,0,.16,4.7,.16,pole);
+  block(g,0,.13,0,.7,.26,.7,base);
+  const texture=labelTexture(String(metres)+'m','#ffffff','#142d35');
+  const sign=new T.Mesh(new T.PlaneGeometry(3.1,.82),new T.MeshBasicMaterial({map:texture,side:T.DoubleSide,transparent:false}));
+  sign.position.set(0,4.25,0);sign.rotation.y=-Math.atan2(at.tz,at.tx)+Math.PI/2;
+  g.add(sign);world.add(g);
+ }
+ // Corner labels are schematic until venue-specific surveyed geometry is available.
+ for(const [fraction,name] of [[.48,'3 CORNER'],[.68,'4 CORNER']]){
+  const at=pathAt(START+fraction*TRAVEL,side>0?22:-8);
+  const g=new T.Group();g.position.set(at.x,0,at.z);
+  block(g,0,2.2,0,.13,4.4,.13,mat(0xd7dce0));
+  const sign=new T.Mesh(new T.PlaneGeometry(4.5,.82),new T.MeshBasicMaterial({map:labelTexture(name,'#17353d','#ffffff'),side:T.DoubleSide}));
+  sign.position.y=4.2;sign.rotation.y=-Math.atan2(at.tz,at.tx)+Math.PI/2;g.add(sign);world.add(g);
+ }
+}
 function buildCourse(){halos=[];if(world){scene.remove(world);disposeGroup(world)}world=new T.Group();scene.add(world);const conditions=raceConditions(window.__oddsRace3dData||{});const field=mat(0x354b2d,.97),dirt=new T.MeshStandardMaterial({color:conditions.wet?0x715744:0xae9270,roughness:conditions.wet?.67:.96,map:makeTexture(),side:T.DoubleSide});const ground=new T.Mesh(new T.PlaneGeometry(700,700),field);ground.rotation.x=-Math.PI/2;ground.position.y=-.02;ground.receiveShadow=true;world.add(ground);trackRibbon(-1,15,dirt);trackRibbon(-2,-1,mat(0x7b815a));
  const railmat=mat(0xdddac9,.55);for(const lane of [-.7,15]){const points=[];for(let i=0;i<=240;i++){const p=pathAt(i/240*PERIMETER,lane);points.push(new T.Vector3(p.x,1.1,p.z))}const rail=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(points,true),380,.043,4,true),railmat);world.add(rail);for(let i=0;i<96;i++){const p=pathAt(i/96*PERIMETER,lane);block(world,p.x,.55,p.z,.07,1.1,.07,railmat)}}
+ addCourseMarkers();
  const finish=pathAt(FINISH,5.5);const finishLine=new T.Group();finishLine.position.set(finish.x,.018,finish.z);finishLine.rotation.y=-Math.atan2(finish.tz,finish.tx);block(finishLine,0,0,0,.20,.024,13,mat(0xf6eee0));world.add(finishLine);
  for(const lane of [-1.7,13]){const p=pathAt(FINISH,lane);block(world,p.x,2.55,p.z,.20,5.1,.20,mat(0xe7e5dc));for(let j=0;j<7;j++)block(world,p.x,4.9-j*.30,p.z,.26,.27,.26,mat(j%2?0x18212c:0xeae9da));const sign=labelTexture('FINISH','#102131','#f5d487');const m=new T.Mesh(new T.PlaneGeometry(3.8,1.1),new T.MeshBasicMaterial({map:sign,side:T.DoubleSide}));m.position.set(p.x,5.5,p.z);m.rotation.y=Math.PI/2;world.add(m)}
  // Grandstand tiers behind the home straight; repeated seat blocks stay outside the course.
