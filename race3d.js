@@ -49,7 +49,7 @@ function horse(h,index){
 function pathAt(s,lane=0){s=((s%PERIMETER)+PERIMETER)%PERIMETER;let x,z,tx,tz;if(s<2*L){x=-L+s;z=R;tx=1;tz=0}else if(s<2*L+Math.PI*R){const a=Math.PI/2-(s-2*L)/R;x=L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}else if(s<4*L+Math.PI*R){x=L-(s-2*L-Math.PI*R);z=-R;tx=-1;tz=0}else{const a=-Math.PI/2-(s-4*L-Math.PI*R)/R;x=-L+R*Math.cos(a);z=R*Math.sin(a);tx=Math.sin(a);tz=-Math.cos(a)}return {x:x-tz*lane,z:(z+tx*lane)*direction,tx,tz:tz*direction}}
 function trackRibbon(inner,outer,m){const vertices=[],uvs=[],indices=[],steps=380;for(let i=0;i<=steps;i++){for(const lane of [inner,outer]){const p=pathAt(i/steps*PERIMETER,lane);vertices.push(p.x,.008,p.z);uvs.push(p.x/180,p.z/120)}}for(let i=0;i<steps;i++){const a=i*2;indices.push(a,a+1,a+2,a+1,a+3,a+2)}const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(vertices,3));g.setAttribute('uv',new T.Float32BufferAttribute(uvs,2));g.setIndex(indices);g.computeVertexNormals();m.side=T.DoubleSide;const mesh=new T.Mesh(g,m);mesh.receiveShadow=true;world.add(mesh)}
 function makeTexture(){const cv=document.createElement('canvas');cv.width=cv.height=256;const ctx=cv.getContext('2d');ctx.fillStyle='#a38964';ctx.fillRect(0,0,256,256);let seed=919;for(let i=0;i<9500;i++){seed=(seed*16807)%2147483647;const x=seed%256;seed=(seed*16807)%2147483647;const y=seed%256;ctx.fillStyle=i%2?'rgba(39,26,18,.13)':'rgba(239,220,181,.18)';ctx.fillRect(x,y,1.5,1)}const t=new T.CanvasTexture(cv);t.wrapS=t.wrapT=T.RepeatWrapping;t.repeat.set(90,70);return t}
-function buildCourse(){halos=[];if(world){scene.remove(world);disposeGroup(world)}world=new T.Group();scene.add(world);const field=mat(0x354b2d,.97),dirt=new T.MeshStandardMaterial({color:0xae9270,roughness:.96,map:makeTexture(),side:T.DoubleSide});const ground=new T.Mesh(new T.PlaneGeometry(700,700),field);ground.rotation.x=-Math.PI/2;ground.position.y=-.02;ground.receiveShadow=true;world.add(ground);trackRibbon(-1,15,dirt);trackRibbon(-2,-1,mat(0x7b815a));
+function buildCourse(){halos=[];if(world){scene.remove(world);disposeGroup(world)}world=new T.Group();scene.add(world);const conditions=raceConditions(window.__oddsRace3dData||{});const field=mat(0x354b2d,.97),dirt=new T.MeshStandardMaterial({color:conditions.wet?0x715744:0xae9270,roughness:conditions.wet?.67:.96,map:makeTexture(),side:T.DoubleSide});const ground=new T.Mesh(new T.PlaneGeometry(700,700),field);ground.rotation.x=-Math.PI/2;ground.position.y=-.02;ground.receiveShadow=true;world.add(ground);trackRibbon(-1,15,dirt);trackRibbon(-2,-1,mat(0x7b815a));
  const railmat=mat(0xdddac9,.55);for(const lane of [-.7,15]){const points=[];for(let i=0;i<=240;i++){const p=pathAt(i/240*PERIMETER,lane);points.push(new T.Vector3(p.x,1.1,p.z))}const rail=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(points,true),380,.043,4,true),railmat);world.add(rail);for(let i=0;i<96;i++){const p=pathAt(i/96*PERIMETER,lane);block(world,p.x,.55,p.z,.07,1.1,.07,railmat)}}
  const finish=pathAt(FINISH,5.5);const finishLine=new T.Group();finishLine.position.set(finish.x,.018,finish.z);finishLine.rotation.y=-Math.atan2(finish.tz,finish.tx);block(finishLine,0,0,0,.20,.024,13,mat(0xf6eee0));world.add(finishLine);
  for(const lane of [-1.7,13]){const p=pathAt(FINISH,lane);block(world,p.x,2.55,p.z,.20,5.1,.20,mat(0xe7e5dc));for(let j=0;j<7;j++)block(world,p.x,4.9-j*.30,p.z,.26,.27,.26,mat(j%2?0x18212c:0xeae9da));const sign=labelTexture('FINISH','#102131','#f5d487');const m=new T.Mesh(new T.PlaneGeometry(3.8,1.1),new T.MeshBasicMaterial({map:sign,side:T.DoubleSide}));m.position.set(p.x,5.5,p.z);m.rotation.y=Math.PI/2;world.add(m)}
@@ -84,16 +84,24 @@ function init(){host=document.getElementById('flowTrack');if(!host||!window.THRE
  const play=document.createElement('button');play.type='button';play.className='r3-play';play.id='r3-play';play.textContent='▶ ゲートから再生';play.onclick=()=>window.playFlow?.();ui.appendChild(play);
  const views=document.createElement('div');views.className='r3-views';['中継','追走','全景','横追走'].forEach((name,i)=>{const b=document.createElement('button');b.type='button';b.textContent=name;b.dataset.mode=i;b.onclick=()=>{mode=i;lastPaint='';controls.querySelector('#r3-camera').textContent='カメラ：'+name};views.appendChild(b)});ui.appendChild(views);
  const expand=document.createElement('button');expand.type='button';expand.className='r3-expand';expand.textContent='⛶ 拡大';expand.onclick=()=>{const expanded=host.classList.toggle('r3-expanded');expand.textContent=expanded?'✕ 閉じる':'⛶ 拡大';expand.setAttribute('aria-pressed',String(expanded));lastPaint=''};ui.appendChild(expand);
- const panel=document.querySelector('.flowControls');panel?.insertAdjacentElement('afterend',controls);attach();ready=true;document.documentElement.dataset.race3d='active';canvas.addEventListener('pointerdown',()=>{});window.__race3dDebug={version:'cinema-7'};loop(0);
+ const panel=document.querySelector('.flowControls');panel?.insertAdjacentElement('afterend',controls);attach();ready=true;document.documentElement.dataset.race3d='active';canvas.addEventListener('pointerdown',()=>{});window.__race3dDebug={version:'cinema-weather-8'};loop(0);
 }
 function attach(){host=document.getElementById('flowTrack');if(host){host.appendChild(canvas);host.appendChild(labels);host.appendChild(ui)}}
+function raceConditions(d){
+ const race=d.race||{},course=d.race_flow?.course||{};
+ const weather=[race.weather,race.tenki,course.weather].find(v=>typeof v==='string'&&v.trim())||'';
+ const going=[race.track_condition,race.going,course.condition].find(v=>typeof v==='string'&&v.trim())||'';
+ const rain=/雨|rain|shower|storm/i.test(weather),cloud=/曇|くもり|cloud|overcast/i.test(weather);
+ const wet=/不良|重|稍重|稍|mud|wet|sloppy|yield|soft/i.test(going);
+ return {weather,going,rain,cloud,wet};
+}
 function setAtmosphere(d){
- const iso=d.race?.start_iso;let hour=iso?Number(new Date(iso).toLocaleTimeString('en-GB',{timeZone:'Asia/Tokyo',hour:'2-digit',hour12:false})):12;
+ const conditions=raceConditions(d);const iso=d.race?.start_iso;let hour=iso?Number(new Date(iso).toLocaleTimeString('en-GB',{timeZone:'Asia/Tokyo',hour:'2-digit',hour12:false})):12;
  atmosphere=moodOverride||(hour>=18||hour<6?'night':hour>=16?'sunset':'day');
  const button=document.getElementById('r3-mood');if(button)button.textContent='光：'+({day:'昼景',sunset:'夕景',night:'ナイター'}[atmosphere])+(moodOverride?'':'（自動）');
- halos.forEach(o=>o.material.opacity=atmosphere==='night'?.8:atmosphere==='sunset'?.6:.12);if(skyKey===atmosphere)return;skyKey=atmosphere;const night=atmosphere==='night',sunset=atmosphere==='sunset';
- const cv=document.createElement('canvas');cv.width=16;cv.height=512;const c=cv.getContext('2d'),g=c.createLinearGradient(0,0,0,512);g.addColorStop(0,night?'#06162f':sunset?'#493d70':'#527f9d');g.addColorStop(.43,night?'#22466d':sunset?'#d47880':'#95b8c7');g.addColorStop(.51,night?'#597589':sunset?'#ffd49a':'#dae0ca');g.addColorStop(1,night?'#122a35':'#798064');c.fillStyle=g;c.fillRect(0,0,16,512);const tx=new T.CanvasTexture(cv);tx.mapping=T.EquirectangularReflectionMapping;tx.colorSpace=T.SRGBColorSpace;scene.background?.dispose?.();scene.background=tx;scene.fog.color.set(night?0x456278:sunset?0xba9989:0xb2c4c2);scene.fog.near=95;scene.fog.far=320;
- hemi.color.set(night?0xb0d2ff:sunset?0xf4c7ac:0xd8e8f3);hemi.groundColor.set(night?0x314651:0x6c5540);hemi.intensity=night?2.3:2.0;sun.color.set(night?0xcfe5ff:sunset?0xffb777:0xffdfb2);sun.intensity=night?2.7:sunset?3.2:3;sun.position.set(-55,sunset?25:70,40);renderer.toneMappingExposure=night?1.12:1.18;if(glowMaterial)glowMaterial.opacity=night?1:sunset?.9:.4;
+ halos.forEach(o=>o.material.opacity=atmosphere==='night'?.8:atmosphere==='sunset'?.6:.12);const skySignature=atmosphere+':'+conditions.weather+':'+conditions.going;if(skyKey===skySignature)return;skyKey=skySignature;const night=atmosphere==='night',sunset=atmosphere==='sunset',overcast=conditions.rain||conditions.cloud;
+ const cv=document.createElement('canvas');cv.width=16;cv.height=512;const c=cv.getContext('2d'),g=c.createLinearGradient(0,0,0,512);g.addColorStop(0,night?'#06162f':overcast?'#556575':sunset?'#493d70':'#527f9d');g.addColorStop(.43,night?'#22466d':overcast?'#8e9aa2':sunset?'#d47880':'#95b8c7');g.addColorStop(.51,night?'#597589':sunset?'#ffd49a':'#dae0ca');g.addColorStop(1,night?'#122a35':'#798064');c.fillStyle=g;c.fillRect(0,0,16,512);const tx=new T.CanvasTexture(cv);tx.mapping=T.EquirectangularReflectionMapping;tx.colorSpace=T.SRGBColorSpace;scene.background?.dispose?.();scene.background=tx;scene.fog.color.set(night?0x456278:sunset?0xba9989:0xb2c4c2);scene.fog.near=95;scene.fog.far=conditions.rain?155:overcast?230:320;
+ hemi.color.set(night?0xb0d2ff:sunset?0xf4c7ac:0xd8e8f3);hemi.groundColor.set(night?0x314651:0x6c5540);hemi.intensity=night?2.3:2.0;sun.color.set(night?0xcfe5ff:sunset?0xffb777:0xffdfb2);sun.intensity=overcast?1.55:night?2.7:sunset?3.2:3;sun.position.set(-55,sunset?25:70,40);renderer.toneMappingExposure=night?1.12:1.18;if(glowMaterial)glowMaterial.opacity=night?1:sunset?.9:.4;
 }
 // Venue direction is authoritative when the prediction payload omits course metadata.
 const LEFT_NAR=/盛岡|浦和|船橋|川崎/;
@@ -149,13 +157,13 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
   const railSide=direction===-1?-1:1;
   // Wider orbit: from outer rail, across the front of the pack, then to the opposite rail.
   // Keep the camera ahead of the horses until the finish sweep to avoid crossing through models.
-  const orbit=smooth((p-.78)/.145);
-  const sideOffset=(w<h?23:31)*(1-orbit)-((w<h?11:16)*orbit);
+  const orbit=smooth((p-.765)/.16);
+  const sideOffset=(w<h?28:38)*(1-orbit)-((w<h?20:28)*orbit);
   const frontal=center.clone().addScaledVector(tangent,ahead+6*(1-orbit)).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,6.8-1.8*headOn,0));
   const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
   // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
   const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
-  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?30:39)).add(new T.Vector3(0,9.5,0));
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?39:49)).add(new T.Vector3(0,9.5,0));
   frontal.lerp(finishCamera,finishSweep);
   frontalLook.lerp(finishFocus,finishSweep);
   camera.position.lerp(frontal,intro);
