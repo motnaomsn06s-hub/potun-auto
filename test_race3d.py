@@ -8,7 +8,7 @@ class Race3DTests(unittest.TestCase):
         ns = load_app_without_database()
         ns['app'].root_path = str(Path(__file__).resolve().parent)
         client = ns['app'].test_client()
-        for url, marker in [('/race3d.js', b'final-6'), ('/assets/three.min.js', b'WebGLRenderer')]:
+        for url, marker in [('/race3d.js', b'cinema-7'), ('/assets/three.min.js', b'WebGLRenderer')]:
             with self.subTest(url=url):
                 response = client.get(url)
                 self.assertEqual(response.status_code, 200)
