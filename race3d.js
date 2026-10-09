@@ -94,8 +94,8 @@ function setAtmosphere(d){
  hemi.color.set(night?0xb0d2ff:sunset?0xf4c7ac:0xd8e8f3);hemi.groundColor.set(night?0x314651:0x6c5540);hemi.intensity=night?2.3:2.0;sun.color.set(night?0xcfe5ff:sunset?0xffb777:0xffdfb2);sun.intensity=night?2.7:sunset?3.2:3;sun.position.set(-55,sunset?25:70,40);renderer.toneMappingExposure=night?1.12:1.18;if(glowMaterial)glowMaterial.opacity=night?1:sunset?.9:.4;
 }
 // Venue direction is authoritative when the prediction payload omits course metadata.
-const LEFT_NAR=/盛岡|水沢|浦和|船橋|川崎|名古屋|笠松|金沢/;
-const RIGHT_NAR=/門別|帯広|大井|園田|姫路|高知|佐賀/;
+const LEFT_NAR=/盛岡|浦和|船橋|川崎/;
+const RIGHT_NAR=/門別|水沢|大井|金沢|笠松|名古屋|園田|姫路|高知|佐賀/;
 function resolveDirection(d){
  const rf=d.race_flow||{},course=rf.course||{},race=d.race||{};
  const raw=[race.venue,race.track,race.course,race.racecourse,race.place,race.name,race.race_key,d.race_key].filter(v=>typeof v==='string').join(' ');
