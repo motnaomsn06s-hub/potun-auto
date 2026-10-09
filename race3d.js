@@ -102,7 +102,7 @@ function buildGate(){
  });batchChildren(fix);
 }
 function relative(h,p){const a=(h.ranks||h.path||[]).map(Number);if(a.length<4)return +h.horse||1;const u=clamp(p/FINISH_AT,0,1)*3,i=Math.min(2,Math.floor(u)),f=u-i;return a[i]+(a[i+1]-a[i])*f}
-function init(){host=document.getElementById('flowTrack');if(!host||!window.THREE)return;T=window.THREE;mode=3;try{renderer=new T.WebGLRenderer({antialias:true,powerPreference:'high-performance'});}catch(e){fallback('3D非対応のため簡易表示');return}scene=new T.Scene();scene.background=new T.Color(0x899eaa);scene.fog=new T.Fog(0x899eaa,95,340);camera=new T.PerspectiveCamera(43,1,.1,650);renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));renderer.outputColorSpace=T.SRGBColorSpace;renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.18;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;canvas=renderer.domElement;canvas.id='flow3dCanvas';canvas.setAttribute('aria-label','立体コースを走る予想馬群');canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('3Dを停止しました。簡易表示に切替')});
+function init(){host=document.getElementById('flowTrack');if(!host||!window.THREE)return;T=window.THREE;mode=0;try{renderer=new T.WebGLRenderer({antialias:true,powerPreference:'high-performance'});}catch(e){fallback('3D非対応のため簡易表示');return}scene=new T.Scene();scene.background=new T.Color(0x899eaa);scene.fog=new T.Fog(0x899eaa,95,340);camera=new T.PerspectiveCamera(43,1,.1,650);renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));renderer.outputColorSpace=T.SRGBColorSpace;renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.18;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;canvas=renderer.domElement;canvas.id='flow3dCanvas';canvas.setAttribute('aria-label','立体コースを走る予想馬群');canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('3Dを停止しました。簡易表示に切替')});
  geo.sphere=new T.SphereGeometry(1,16,12);geo.box=new T.BoxGeometry(1,1,1);herd=new T.Group();scene.add(herd);hemi=new T.HemisphereLight(0xd8e8f3,0x5e4d37,2.0);scene.add(hemi);sun=new T.DirectionalLight(0xffdfb2,3.0);sun.position.set(-55,70,40);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-95;sun.shadow.camera.right=95;sun.shadow.camera.top=80;sun.shadow.camera.bottom=-80;sun.shadow.camera.far=240;sun.shadow.bias=-.0003;sun.shadow.normalBias=.03;scene.add(sun);scene.add(sun.target);
  labels=document.createElement('div');labels.className='r3-labels';ui=document.createElement('div');ui.className='r3-hud';ui.innerHTML='<div class="r3-racecard"><small>ODDS SCOPE · RACE THEATER</small><strong id="r3-racename">展開予想</strong><span id="r3-racedetail"></span></div><div class="r3-distance"><small>想定残り</small><b id="r3-remaining">—</b><span id="r3-pace"></span></div><div class="r3-top"><div><b>RACE FLOW <i>3D</i></b><span id="r3-stage">START</span></div><span id="r3-course">模式コース</span></div><div class="r3-bottom"><span id="r3-raceinfo">予想映像</span><b id="r3-finish"></b></div>';
  const controls=document.createElement('div');controls.className='r3-controls';controls.innerHTML='<button type="button" id="r3-camera">カメラ：中継</button><button type="button" id="r3-direction">右回り・模式</button>';controls.querySelector('#r3-camera').textContent='カメラ：'+['中継','追走','全景','横追走'][mode];controls.querySelector('#r3-camera').onclick=()=>{mode=(mode+1)%4;controls.querySelector('#r3-camera').textContent='カメラ：'+['中継','追走','全景','横追走'][mode];lastPaint=''};controls.querySelector('#r3-direction').onclick=()=>{directionOverride=directionOverride===null?-1:directionOverride===-1?1:null;lastPaint=''};
@@ -176,20 +176,20 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  // Broadcast camera choreography: corner exit -> front three-quarter -> near head-on -> side-on finish.
  if(mode===0&&p>.75){
   const smooth=v=>{v=clamp(v,0,1);return v*v*(3-2*v)};
-  const intro=smooth((p-.75)/.075),headOn=smooth((p-.84)/.065),finishSweep=smooth((p-.913)/.067);
+  const intro=smooth((p-.72)/.075),headOn=smooth((p-.80)/.065),finishSweep=smooth((p-.86)/.08);
   const remaining=Number(rf.course?.distance||1400)*Math.max(0,1-p/FINISH_AT);
   const ahead=remaining>150?31:remaining>60?24:remaining>15?19:15;
   // Negative outward keeps the inside rail behind the field in a right-hand final straight.
-  const railSide=direction===-1?-1:1;
+  const railSide=direction===-1?1:-1;
   // Wider orbit: from outer rail, across the front of the pack, then to the opposite rail.
   // Keep the camera ahead of the horses until the finish sweep to avoid crossing through models.
   const orbit=smooth((p-.755)/.155);
-  const sideOffset=(w<h?24:34)*(1-orbit)-((w<h?26:36)*orbit);
+  const sideOffset=(w<h?23:32)*(1-orbit)-((w<h?22:31)*orbit);
   const frontal=center.clone().addScaledVector(tangent,ahead+6*(1-orbit)).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,6.8-1.8*headOn,0));
   const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
   // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
   const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
-  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?28:39)).add(new T.Vector3(0,9.5,0));
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,-(w<h?8:12)).addScaledVector(outward,-railSide*(w<h?30:42)).add(new T.Vector3(0,9.5,0));
   frontal.lerp(finishCamera,finishSweep);
   frontalLook.lerp(finishFocus,finishSweep);
   camera.position.lerp(frontal,intro);
