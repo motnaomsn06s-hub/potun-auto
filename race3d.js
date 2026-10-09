@@ -139,15 +139,24 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
   const blendedTarget=look.clone().lerp(broadcastLook,blend);
   camera.lookAt(blendedTarget);
  }
- // Final-straight broadcast: front three-quarter view of the approaching field.
- if(mode===0&&p>.78){
-  const k=clamp((p-.78)/.065,0,1),blend=k*k*(3-2*k);
+ // Broadcast camera choreography: corner exit -> front three-quarter -> near head-on -> side-on finish.
+ if(mode===0&&p>.75){
+  const smooth=v=>{v=clamp(v,0,1);return v*v*(3-2*v)};
+  const intro=smooth((p-.75)/.075),headOn=smooth((p-.84)/.065),finishSweep=smooth((p-.913)/.067);
   const remaining=Number(rf.course?.distance||1400)*Math.max(0,1-p/FINISH_AT);
-  const ahead=remaining>90?26:remaining>25?19:14;
-  const broadcastPos=center.clone().addScaledVector(tangent,ahead).addScaledVector(outward,w<h?4.5:7).add(new T.Vector3(0,w<h?5.5:6.5,0));
-  const broadcastLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.4,0));
-  camera.position.lerp(broadcastPos,blend);
-  camera.lookAt(look.clone().lerp(broadcastLook,blend));
+  const ahead=remaining>150?31:remaining>60?24:remaining>15?19:15;
+  // Negative outward keeps the inside rail behind the field in a right-hand final straight.
+  const railSide=direction===-1?-1:1;
+  const sideOffset=(w<h?13:18)*(1-headOn)+(w<h?3.5:5)*headOn;
+  const frontal=center.clone().addScaledVector(tangent,ahead).addScaledVector(outward,railSide*sideOffset).add(new T.Vector3(0,headOn?5.1:6.6,0));
+  const frontalLook=center.clone().addScaledVector(tangent,-(w<h?3:5)).add(new T.Vector3(0,1.45,0));
+  // At the line rotate to a wider trackside finish-camera composition, retaining the entire pack.
+  const finishAt=pathAt(FINISH,6),finishFocus=new T.Vector3(finishAt.x,1.45,finishAt.z);
+  const finishCamera=finishFocus.clone().addScaledVector(tangent,1.5).addScaledVector(outward,railSide*(w<h?27:33)).add(new T.Vector3(0,8.5,0));
+  frontal.lerp(finishCamera,finishSweep);
+  frontalLook.lerp(finishFocus,finishSweep);
+  camera.position.lerp(frontal,intro);
+  camera.lookAt(look.clone().lerp(frontalLook,intro));
  }
  if(t<.16&&mode!==2){const gateAt=pathAt(START,7.5),gcenter=new T.Vector3(gateAt.x,1.2,gateAt.z),gpos=gcenter.clone().addScaledVector(tangent,14).addScaledVector(outward,9).add(new T.Vector3(0,6,0)),blend=clamp((t-.10)/.06,0,1);camera.position.lerp(gpos,1-blend);camera.lookAt(look.clone().lerp(gcenter,1-blend))}
  renderer.render(scene,camera);const occupied=[];for(const {m} of ranks){const u=m.userData,v=new T.Vector3(0,2.45,0).applyMatrix4(m.matrixWorld).project(camera),x=(v.x*.5+.5)*w,y=(-v.y*.5+.5)*h,active=+d.selected===+u.h.horse;const inFrame=v.z<1&&x>12&&x<w-12&&y>60&&y<h-42;u.label.hidden=t<.10||!inFrame||mode===3||(mode===1&&m!==focus&&m.position.distanceTo(focus.position)>11);let lx=x,ly=y;for(const [dx,dy] of [[0,0],[-18,-26],[18,-26],[-32,-52],[0,-52],[32,-52],[-18,-78],[18,-78],[0,-104]]){const cx=clamp(x+dx,16,w-16),cy=Math.max(105,y+dy);lx=cx;ly=cy;if(!occupied.some(o=>Math.abs(o.x-cx)<28&&Math.abs(o.y-cy)<27))break}occupied.push({x:lx,y:ly});u.label.style.setProperty('--stem',Math.max(0,y-ly)+'px');u.label.style.transform=`translate(${lx}px,${ly}px) translate(-50%,-100%)`;u.label.classList.toggle('selected',active);u.label.title=u.h.horse+'番 '+(u.h.name||'');}
