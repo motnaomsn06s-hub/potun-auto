@@ -1132,10 +1132,25 @@ def cancel():
  try:
   key=request.get_json(force=True)["race_key"];c=con();c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s",(key,));c.commit();c.close();return jsonify(ok=True)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
+# 定期処理はバックグラウンドで動かし、/api/tick はすぐ返す（gunicornの60秒タイムアウトで落ちないように）
+import threading
+_tick_lock=threading.Lock()
+_tick_state={"running":False,"started":None,"finished":None,"events":None,"error":None}
+def _run_due():
+ try:
+  ev=due();_tick_state.update(events=ev,error=None)
+ except Exception as e:
+  _tick_state.update(error=str(e))
+ finally:
+  _tick_state.update(running=False,finished=datetime.now(JST).isoformat());_tick_lock.release()
 @app.route("/api/tick",methods=["GET","POST"])
 def tick():
- try:return jsonify(ok=True,events=due(),at=datetime.now(JST).isoformat())
- except Exception as e:return jsonify(ok=False,error=str(e)),500
+ now=datetime.now(JST).isoformat()
+ if _tick_lock.acquire(blocking=False):
+  _tick_state.update(running=True,started=now)
+  threading.Thread(target=_run_due,daemon=True).start()
+  return jsonify(ok=True,started=True,at=now,last=dict(_tick_state))
+ return jsonify(ok=True,started=False,at=now,last=dict(_tick_state))
 @app.route("/api/status")
 def status():
  try:
