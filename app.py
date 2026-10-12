@@ -1144,14 +1144,16 @@ def _run_due():
  finally:
   _tick_state.update(running=False,finished=datetime.now(JST).isoformat());_tick_lock.release()
 # サーバーが起きている間は、自分で1分ごとに定期処理を回す（cron-job.orgは起こすだけでよい）
+# 15秒ごとに一定の間隔で確認する（前の処理が続いていればその回は見送り）。
+# 4分前などの取得窓は1分幅しかないため、処理時間に関係なく窓の中で必ず確認できるようにする。
 def _auto_loop():
  wait=threading.Event()
  while True:
-  wait.wait(60)
+  wait.wait(15)
   try:
    if _tick_lock.acquire(blocking=False):
     _tick_state.update(running=True,started=datetime.now(JST).isoformat())
-    _run_due()
+    threading.Thread(target=_run_due,daemon=True).start()
   except Exception as e:
    _tick_state.update(error=str(e))
 threading.Thread(target=_auto_loop,daemon=True).start()
