@@ -1143,6 +1143,18 @@ def _run_due():
   _tick_state.update(error=str(e))
  finally:
   _tick_state.update(running=False,finished=datetime.now(JST).isoformat());_tick_lock.release()
+# サーバーが起きている間は、自分で1分ごとに定期処理を回す（cron-job.orgは起こすだけでよい）
+def _auto_loop():
+ wait=threading.Event()
+ while True:
+  wait.wait(60)
+  try:
+   if _tick_lock.acquire(blocking=False):
+    _tick_state.update(running=True,started=datetime.now(JST).isoformat())
+    _run_due()
+  except Exception as e:
+   _tick_state.update(error=str(e))
+threading.Thread(target=_auto_loop,daemon=True).start()
 @app.route("/api/tick",methods=["GET","POST"])
 def tick():
  now=datetime.now(JST).isoformat()
