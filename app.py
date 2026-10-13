@@ -24,6 +24,7 @@ def init():
  CREATE TABLE IF NOT EXISTS races(race_key TEXT PRIMARY KEY,date TEXT,baba TEXT,baba_name TEXT,race INTEGER,start_iso TEXT,status TEXT DEFAULT 'reserved',created_at TEXT,result_checked INTEGER DEFAULT 0);
  CREATE TABLE IF NOT EXISTS snapshots(race_key TEXT,slot INTEGER,fetched_at TEXT,payload TEXT,PRIMARY KEY(race_key,slot));
  CREATE TABLE IF NOT EXISTS predictions(race_key TEXT,horse INTEGER,rank INTEGER,score DOUBLE PRECISION,pop INTEGER,odds DOUBLE PRECISION,d1 DOUBLE PRECISION,d2 DOUBLE PRECISION,agree DOUBLE PRECISION,created_at TEXT,PRIMARY KEY(race_key,horse));
+ CREATE TABLE IF NOT EXISTS place_value_picks(race_key TEXT,horse INTEGER,rank INTEGER,score DOUBLE PRECISION,pop INTEGER,created_at TEXT,PRIMARY KEY(race_key,horse));
  CREATE TABLE IF NOT EXISTS results(race_key TEXT PRIMARY KEY,first_horse INTEGER,second_horse INTEGER,third_horse INTEGER,fetched_at TEXT,payload TEXT);
  CREATE TABLE IF NOT EXISTS learning_samples(
    race_key TEXT,horse INTEGER,label INTEGER,
@@ -727,6 +728,25 @@ def race_signal_summary(A):
 def adaptive_candidates(A):
  return A[:3],race_signal_summary(A)
 
+def place_value_candidates(rows):
+ """Frozen, exploratory shortlist. Score is NOT a calibrated probability or ROI."""
+ out=[]
+ for x in rows:
+  try:
+   pop=int(x.get("pop") or 99)
+   if pop<4:continue
+   scope=float(x.get("adaptive_score") or x.get("scope_score") or 0)
+   dna=float(x.get("dna_score") or 0)
+   flow=float(x.get("flow_score") or 0)
+   accel=float(x.get("accel_score") or 0)
+   edge=x.get("edge_score")
+   conf=float(x.get("data_confidence") or 0)
+   popularity_fit=min(12,(pop-3)*2.4) if pop<=8 else max(0,12-(pop-8)*2.5)
+   score=max(0,min(100,.50*scope+.25*dna+.25*flow+popularity_fit+min(8,max(0,accel-60)*.2)+(max(-6,min(6,(float(edge)-50)*.22)) if edge is not None else 0)-(8 if conf<40 else 0)))
+   if score>=55:out.append({"horse":int(x["horse"]),"pop":pop,"score":round(score,2),"name":x.get("name"),"odds":x.get("odds3") or x.get("odds"),"dna_score":dna,"accel_score":accel,"flow_score":flow})
+  except (ValueError,TypeError,KeyError):continue
+ return sorted(out,key=lambda x:-x["score"])[:3]
+
 def save_predictions(key,slot=3):
  # Persist the latest top-3 for validation at each stage. The UI can show a wider candidate pool
  # at 10m/5m, while the predictions table keeps the current top-3 and is overwritten at 3m FINAL.
@@ -734,6 +754,12 @@ def save_predictions(key,slot=3):
  if not C:return []
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x.get("d1",0),x.get("d2",0),x.get("agree",0),datetime.now(JST).isoformat()))
+ if slot==3:
+  # Persist once, at FINAL, so results cannot retroactively change the selections.
+  existing=c.execute("SELECT 1 FROM place_value_picks WHERE race_key=%s LIMIT 1",(key,)).fetchone()
+  if not existing:
+   for i,x in enumerate(place_value_candidates(A),1):
+    c.execute("INSERT INTO place_value_picks(race_key,horse,rank,score,pop,created_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",(key,x["horse"],i,x["score"],x["pop"],datetime.now(JST).isoformat()))
  c.commit();c.close();return C
 
 def signal_strength(x):return scope_label(x)
@@ -1176,7 +1202,14 @@ def status():
   c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone()
   ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall()
   pp=[dict(x) for x in c.execute("SELECT * FROM predictions WHERE race_key=%s ORDER BY rank",(key,)).fetchall()]
-  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone();c.close()
+  rs=c.execute("SELECT * FROM results WHERE race_key=%s",(key,)).fetchone()
+  place_saved=[dict(x) for x in c.execute("SELECT * FROM place_value_picks WHERE race_key=%s ORDER BY rank",(key,)).fetchall()]
+  place_stats=dict(c.execute("""SELECT COUNT(DISTINCT p.race_key) AS races,COUNT(*) AS picks,
+    COUNT(*) FILTER (WHERE p.horse IN (r.first_horse,r.second_horse,r.third_horse)) AS hits,
+    COUNT(*) FILTER (WHERE p.rank=1) AS top1_count,
+    COUNT(*) FILTER (WHERE p.rank=1 AND p.horse IN (r.first_horse,r.second_horse,r.third_horse)) AS top1_hits
+    FROM place_value_picks p JOIN results r ON r.race_key=p.race_key""").fetchone())
+  c.close()
   RAW={};S={}
   for x in ss:
    try:
@@ -1272,7 +1305,7 @@ def status():
   race_signal=race_signal_summary(rankings)
   race_flow=race_flow_summary(key,rankings)
   guardrail=result_guardrail()
-  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
