@@ -572,25 +572,14 @@ async function load(){try{
  }));
 }catch(e){$('list').innerHTML=`<span class="muted">一覧取得失敗：${esc(e.message)}</span>`}}
 async function refreshProfile(k){if(profileRefreshing)return;profileRefreshing=true;try{await fetch('/api/profile-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race_key:k})});await show(k,true)}catch(e){}finally{profileRefreshing=false}}
-function renderPlaceValue(rows,phase){
+function renderPlaceValue(rows,phase,stored){
  const el=$('placeValueRows');if(!el)return;
- if(!rows?.length){el.innerHTML='<span class="muted">評価できる馬のデータがありません。</span>';return}
- if(phase!=='FINAL'){el.innerHTML='<span class="muted">発走3分前のFINAL確定後に表示します。</span>';return}
- const vals=rows.map(x=>{
-  const pop=Number(x.pop),dna=Number(x.dna_score),flow=Number(x.flow_score),acc=Number(x.accel_score),edge=Number(x.edge_score),scope=Number(x.adaptive_score??x.scope_score);
-  if(!Number.isFinite(pop)||pop<1||!Number.isFinite(dna)||!Number.isFinite(flow)||!Number.isFinite(scope))return null;
-  // This is a screening index, NOT a calibrated probability or expected return.
-  const popularityFit=pop<=3?0:pop<=8?Math.min(12,(pop-3)*2.4):Math.max(0,12-(pop-8)*2.5);
-  const accelFit=Number.isFinite(acc)?Math.min(8,Math.max(0,acc-60)*.2):0;
-  const edgeFit=Number.isFinite(edge)?Math.max(-6,Math.min(6,(edge-50)*.22)):0;
-  const confidence=Number(x.data_confidence);
-  const penalty=Number.isFinite(confidence)&&confidence<40?8:0;
-  const score=Math.max(0,Math.min(100,.50*scope+.25*dna+.25*flow+popularityFit+accelFit+edgeFit-penalty));
-  return {...x,pvScore:score,pvPop:pop};
- }).filter(Boolean).sort((a,b)=>b.pvScore-a.pvScore);
- const qualified=vals.filter(x=>x.pvPop>=4&&x.pvScore>=55);
- if(!qualified.length){el.innerHTML='<span class="muted">今回のレースは条件を満たす複勝妙味候補なし（見送り）。</span>';return}
- el.innerHTML=qualified.slice(0,3).map((x,i)=>`<div class="placeValueHorse"><div><b>${esc(x.horse)}番 ${esc(x.name||'')}</b></div><div class="pvMeta">${esc(x.pvPop)}番人気 · 単勝 ${esc(x.odds3??x.odds??'—')}倍</div><div class="pvScore">暫定妙味指数 ${x.pvScore.toFixed(1)} / 100 · ${i+1}位</div><div class="pvMeta">DNA ${num(x.dna_score)} · ACCEL ${num(x.accel_score)} · FLOW ${num(x.flow_score)}</div></div>`).join('');
+ const stats=stored?.stats||{},saved=stored?.picks||[];
+ const summary=Number(stats.picks)>0?`<div class="pvMeta" style="margin-bottom:8px">検証中：${stats.hits||0}/${stats.picks}頭が3着以内（${stats.races||0}レース） · 妙味1位 ${stats.top1_hits||0}/${stats.top1_count||0}頭</div>`:'<div class="pvMeta" style="margin-bottom:8px">検証データ収集中 · 3着内率は未確定</div>';
+ if(phase!=='FINAL'){el.innerHTML=summary+'<span class="muted">発走3分前のFINAL確定後に表示します。</span>';return}
+ if(!saved.length){el.innerHTML=summary+'<span class="muted">保存された複勝妙味候補はありません。今回の候補は見送り、またはFINAL保存待ちです。</span>';return}
+ const byHorse=new Map((rows||[]).map(x=>[Number(x.horse),x]));
+ el.innerHTML=summary+saved.map(x=>{const horse=byHorse.get(Number(x.horse))||{};return `<div class="placeValueHorse"><b>${esc(x.horse)}番 ${esc(horse.name||'')}</b><div class="pvMeta">${esc(x.pop)}番人気 · 単勝 ${esc(horse.odds3??horse.odds??'—')}倍</div><div class="pvScore">暫定妙味指数 ${Number(x.score).toFixed(1)} / 100 · ${x.rank}位</div><div class="pvMeta">DNA ${num(horse.dna_score)} · ACCEL ${num(horse.accel_score)} · FLOW ${num(horse.flow_score)}</div></div>`}).join('');
 }
 function renderStatus(j){
   last=j;
@@ -605,7 +594,7 @@ function renderStatus(j){
     let phase=j.signal_phase||'WAIT',phaseNames={'CANDIDATE':'候補 / CANDIDATE 5頭','SHORTLIST':'候補絞り込み / 4頭','LATE UPDATE':'直前入替 / 3頭','FINAL':'最終確定 / FINAL 3頭','WAIT':'10分前 CANDIDATE待ち'};
     $('phaseLabel').textContent=phaseNames[phase]||phase;updatePhaseTrack(phase,slots);$('rankingTitle').textContent=phase==='FINAL'?'全馬ランキング / 最終確定':phase==='LATE UPDATE'?'全馬ランキング / 直前入替':phase==='SHORTLIST'?'全馬ランキング / 候補絞り込み':phase==='CANDIDATE'?'全馬ランキング / 候補':'全馬ランキング';
     $('profileState').textContent=phase==='FINAL'?'FINAL READY':(j.profile_ready?'OFFICIAL DATA':'DATA WAIT');$('profileState').style.color=phase==='FINAL'?'#ffe57a':(j.profile_ready?'#65daa1':'#d7b45f');
-    let rows=j.rankings||[];renderPlaceValue(rows,phase);let conf=rows.length?Math.round(rows.reduce((a,x)=>a+(Number(x.data_confidence)||0),0)/rows.length):0,mw=Math.round((j.model?.blend_weight||0)*100);
+    let rows=j.rankings||[];renderPlaceValue(rows,phase,j.place_value);let conf=rows.length?Math.round(rows.reduce((a,x)=>a+(Number(x.data_confidence)||0),0)/rows.length):0,mw=Math.round((j.model?.blend_weight||0)*100);
     $('confidence').textContent=`${phase} · ${j.phase_note||''} · データ充足 ${rows.length?conf+'%':'—'}${phase==='FINAL'?` · 学習 ${j.model?.status||'COLLECTING'} ${mw?mw+'%反映':'未反映'}`:''}`;
     let rs=j.race_signal||{grade:'D',label:'LOW SIGNAL',note:'候補データ待ち',top_index:0,qualified:0};$('raceSignal').className='raceSignal grade-'+String(rs.grade||'D').toLowerCase();$('raceSignal').querySelector('b').textContent=rs.label||'LOW SIGNAL';$('raceSignal').querySelector('small').textContent=`STATUS ${rs.action||'WAIT'} · ${rs.note||''} · SIGNAL ${num(rs.top_index)} · B以上 ${rs.qualified||0}頭`;let gm=guardMeta(j.guardrail);$('guardState').textContent=gm.status;$('guardState').className='guardState '+gm.status;$('guardNote').textContent=gm.note+(j.guardrail?.races?` · 直近${j.guardrail.races}R`:``);renderRaceFlow(j.race_flow);
     let showN=phase==='CANDIDATE'?5:phase==='SHORTLIST'?4:3,shown=j.predictions?.length?j.predictions:rows.slice(0,showN);$('picks').innerHTML=shown.length?shown.map(pickCard).join(''):'<span class="muted">10分前CANDIDATE待ち。候補は早めに表示し、直前データで段階的に絞ります。</span>';
