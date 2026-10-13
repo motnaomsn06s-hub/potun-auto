@@ -1067,6 +1067,10 @@ def due():
 
 @app.route("/")
 def home():return send_from_directory(".","index.html")
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+ return send_from_directory(app.root_path,"apple-touch-icon.png",mimetype="image/png",max_age=0)
+
 @app.route("/race3d.js")
 def race3d_asset():return send_from_directory(app.root_path,"race3d.js",max_age=0)
 @app.route("/assets/three.min.js")
