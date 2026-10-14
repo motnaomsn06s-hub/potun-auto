@@ -1351,7 +1351,18 @@ def status():
   condition_data=race_conditions(r) if r else {"weather":None,"track_condition":None,"source":"unavailable"}
   race_out=dict(r) if r else None
   if race_out:race_out.update(condition_data)
-  return jsonify(race=race_out,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  # Official going is observation-only until historical validation establishes an effect.
+  going=condition_data.get("track_condition")
+  going_context={
+   "weather":condition_data.get("weather"),
+   "going":going,
+   "source":condition_data.get("source","unavailable"),
+   "available":going in ("良","稍重","重","不良"),
+   "prediction_adjustment_applied":False,
+   "validation_status":"NOT_VALIDATED",
+   "note":"馬場状態は取得済み。予想順位への補正は検証前のため未適用です。" if going else "馬場状態を取得できていません。予想順位への補正は未適用です。"
+  }
+  return jsonify(going_context=going_context,race=race_out,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
