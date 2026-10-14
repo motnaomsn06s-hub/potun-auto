@@ -5,29 +5,44 @@ let halos=[],haloTexture;
 let skyKey='',atmosphere='day',moodOverride=null,hemi,sun,glowMaterial;
 let gate,gateKey="",lastRaceKey=null,doors=[],gateSpan=14;
 let T,scene,camera,renderer,host,canvas,world,herd,models=[],labels,ui,sourceKey='',courseKey='',raf=0,lastPaint='',mode=0,direction=1,directionOverride=null,ready=false,loading=false,disposed=false;
-// Venue-specific *schematic* proportions. Dimensions are visual, not surveyed geometry.
+// Official lap lengths and finishing straights, projected onto a smooth schematic oval.
+// Source: Nankan course information. Geometry is not a surveyed track polygon.
 let L=48,R=27,PERIMETER=4*L+2*Math.PI*R;
 const FINISH_AT=.94;
-let FINISH=L*1.5,TRAVEL=(PERIMETER-(2*L+Math.PI*R+20)+FINISH)/FINISH_AT,START=FINISH-FINISH_AT*TRAVEL;
+let FINISH=L*1.5,TRAVEL=PERIMETER*.8,START=FINISH-FINISH_AT*TRAVEL;
+let activeCourse={venue:'generic',layout:'schematic',lap:0,distance:0,verified:false};
 function configureRaceCourse(d){
- const race=d.race||{},rf=d.race_flow||{};
- const venue=[race.venue,race.name,rf.course?.venue,d.race_key].filter(x=>typeof x==='string').join(' ');
- const distance=Number(race.distance||rf.course?.distance||0);
- // Relative straight/turn proportions; keep 'schematic' designation until surveyed.
- const presets=[[/川崎/,43,24,'kawasaki'],[/浦和/,39,22,'urawa'],[/船橋/,53,28,'funabashi'],[/大井/,61,31,'oi']];
- const preset=presets.find(p=>p[0].test(venue));
- L=preset?preset[1]:48;R=preset?preset[2]:27;
- PERIMETER=4*L+2*Math.PI*R;
- FINISH=L*1.5;
- // Preserve the existing distance-specific Oi 1400m start model.
- if(preset&&preset[3]==='oi'&&distance===1400){
-  FINISH=PERIMETER+PERIMETER*386/1600;
-  TRAVEL=PERIMETER*1400/1600/FINISH_AT;
- }else{
+ const race=d.race||{},rf=d.race_flow||{},course=rf.course||{};
+ const venue=[race.venue,race.name,course.venue,d.race_key].filter(v=>typeof v==='string').join(' ');
+ const distance=Number(race.distance||course.distance||0);
+ const layoutText=[race.course,race.course_type,race.track,race.name,course.layout,course.name,course.course].filter(v=>typeof v==='string').join(' ');
+ const inner=/内回り|内コース|\\(内\\)|（内）/.test(layoutText);
+ const left=/左回り|\\(左\\)|（左）/.test(layoutText);
+ const configs=[
+  {match:/川崎/,id:'kawasaki',lap:1200,straight:300,finish:300,ratio:.56},
+  {match:/浦和/,id:'urawa',lap:1200,straight:300,finish:220,ratio:.52},
+  {match:/船橋/,id:'funabashi',lap:inner?1250:1400,straight:308,finish:308,ratio:.57,layout:inner?'inner':'outer'},
+  {match:/大井/,id:'oi',lap:inner?1400:1600,straight:inner?386:486,finish:left?300:(inner?286:386),ratio:.64,layout:inner?'inner':'outer'}
+ ];
+ const cfg=configs.find(c=>c.match.test(venue));
+ if(!cfg||!Number.isFinite(distance)||distance<=0){
+  L=48;R=27;PERIMETER=4*L+2*Math.PI*R;FINISH=L*1.5;
   TRAVEL=(PERIMETER-(2*L+Math.PI*R+20)+FINISH)/FINISH_AT;
+  START=FINISH-FINISH_AT*TRAVEL;
+  activeCourse={venue:'generic',layout:'schematic',lap:0,distance,verified:false};
+  return 'generic-schematic-'+distance;
  }
+ // Uniform scale is 0.18 scene units per real metre; match the documented lap
+ // circumference and home-straight length, rather than arbitrary venue proportions.
+ const scale=.18,lapUnits=cfg.lap*scale;
+ L=cfg.straight*scale/2;
+ R=Math.max(12,(lapUnits-4*L)/(2*Math.PI));
+ PERIMETER=4*L+2*Math.PI*R;
+ FINISH=2*L*Math.min(.96,Math.max(.12,cfg.finish/cfg.straight));
+ TRAVEL=distance*scale/FINISH_AT;
  START=FINISH-FINISH_AT*TRAVEL;
- return (preset?preset[3]:'generic')+'-schematic-'+(distance||'unknown');
+ activeCourse={venue:cfg.id,layout:cfg.layout||'main',lap:cfg.lap,distance,verified:true};
+ return cfg.id+'-'+activeCourse.layout+'-'+distance+'-'+cfg.lap;
 }
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const mats=new Map(),geo={};
