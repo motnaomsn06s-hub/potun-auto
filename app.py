@@ -75,6 +75,28 @@ init()
 def soup(path,q):
  r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status();r.encoding=r.apparent_encoding or r.encoding
  return BeautifulSoup(r.text,"html.parser")
+_CONDITION_CACHE={}
+def race_conditions(r):
+ """Official NAR page only; unknown is explicitly reported, never guessed from forecast."""
+ if not r:return {"weather":None,"track_condition":None,"source":"unavailable"}
+ key=r["race_key"];now=datetime.now(JST);cached=_CONDITION_CACHE.get(key)
+ if cached and (now-cached[0]).total_seconds()<300:return cached[1]
+ result={"weather":None,"track_condition":None,"source":"unavailable"}
+ for page in ("DebaTableSmall","DebaTable"):
+  try:
+   doc=soup(page,qfor(r))
+   text=doc.get_text(" ",strip=True)
+   w=re.search(r"(?:天候|天気)\\s*[:：]?\\s*(晴|曇|くもり|雨|雪|小雨|小雪)",text)
+   g=re.search(r"(?:馬場状態|馬場)\\s*[:：]?\\s*(稍重|不良|良|重)",text)
+   if w:result["weather"]=w.group(1)
+   if g:result["track_condition"]=g.group(1)
+   if w or g:
+    result["source"]="NAR official "+page
+    break
+  except Exception:continue
+ _CONDITION_CACHE[key]=(now,result)
+ return result
+
 def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
 def _num(text):
  m=re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*",(text or "").replace(",",""))
@@ -1305,7 +1327,10 @@ def status():
   race_signal=race_signal_summary(rankings)
   race_flow=race_flow_summary(key,rankings)
   guardrail=result_guardrail()
-  return jsonify(race=dict(r) if r else None,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  condition_data=race_conditions(r) if r else {"weather":None,"track_condition":None,"source":"unavailable"}
+  race_out=dict(r) if r else None
+  if race_out:race_out.update(condition_data)
+  return jsonify(race=race_out,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
