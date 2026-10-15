@@ -41,7 +41,7 @@ function configureRaceCourse(d){
  FINISH=2*L*Math.min(.96,Math.max(.12,cfg.finish/cfg.straight));
  TRAVEL=distance*scale/FINISH_AT;
  START=FINISH-FINISH_AT*TRAVEL;
- activeCourse={venue:cfg.id,layout:cfg.layout||'main',lap:cfg.lap,distance,verified:true};
+ activeCourse={venue:cfg.id,layout:cfg.layout||'main',lap:cfg.lap,distance,verified:false,geometry:'idealized_oval',source:'venue lap/straight reference; start positions inferred'};
  return cfg.id+'-'+activeCourse.layout+'-'+distance+'-'+cfg.lap;
 }
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -173,10 +173,12 @@ const RIGHT_NAR=/門別|水沢|大井|金沢|笠松|名古屋|園田|姫路|高�
 function resolveDirection(d){
  const rf=d.race_flow||{},course=rf.course||{},race=d.race||{};
  const raw=[race.venue,race.track,race.course,race.racecourse,race.place,race.name,race.race_key,d.race_key].filter(v=>typeof v==='string').join(' ');
- if(LEFT_NAR.test(raw))return 1;
- if(RIGHT_NAR.test(raw))return -1;
+ if(/左回り|（左）|\\(左\\)/.test(raw))return 1;
+ if(/右回り|（右）|\\(右\\)/.test(raw))return -1;
  if(course.direction==='left'||course.direction==='左'||course.direction==='左回り')return 1;
  if(course.direction==='right'||course.direction==='右'||course.direction==='右回り')return -1;
+ if(LEFT_NAR.test(raw))return 1;
+ if(RIGHT_NAR.test(raw))return -1;
  return null;
 }
 function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.mode===mode)));const play=ui.querySelector('#r3-play');play.textContent=d.playing?'Ⅱ 一時停止':(+d.progress>=.995?'↻ もう一度再生':+d.progress>0?'▶ 続きから再生':'▶ ゲートから再生');play.classList.toggle('running',!!d.playing||+d.progress>0);
