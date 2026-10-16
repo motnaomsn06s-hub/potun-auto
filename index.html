@@ -292,6 +292,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
     <div class="clockBox"><div id="todayLabel" class="date">—</div><div><span id="clockLabel" class="time">--:--:--</span><span class="live">LIVE</span></div></div>
       <button type="button" class="headerRefresh" id="headerRefresh" onclick="refreshHeaderData()" aria-label="最新データに更新" title="データを再取得">↻ 更新</button>
   </header>
+  <section class="panel pad" id="learningPanel" style="margin-top:12px;border:1px solid #365a70">
+    <div class="head"><h2>学習状況・予想精度</h2><span class="badge">自動更新</span></div>
+    <div id="learn" class="muted" aria-live="polite">学習データを取得中…</div>
+  </section>
   <section class="panel pad">
     <div class="head"><h2>レース予約</h2><span class="badge">発走3分前まで予約可</span></div>
     <div class="reserveGrid">
@@ -355,7 +359,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
     <details><summary>MARKET TAPE / DATA STATUS</summary><div><div class="tape">
       <div class="slot"><span>15分前</span><b id="s15">未取得</b><em id="t15">—</em></div><div class="slot"><span>10分前</span><b id="s10">未取得</b><em id="t10">—</em></div><div class="slot"><span>5分前</span><b id="s5">未取得</b><em id="t5">—</em></div><div class="slot"><span>4分前</span><b id="s4">未取得</b><em id="t4">—</em></div><div class="slot"><span>3分前</span><b id="s3">未取得</b><em id="t3">—</em></div>
     </div><div id="marketCount" class="marketCount"></div></div></details>
-    <details><summary>RESULT / VALIDATION / LEARNING</summary><div><div id="result" class="muted">未取得</div><div id="learn" style="margin-top:10px" class="muted">集計待ち</div></div></details>
+    <details><summary>詳細検証・結果データ</summary><div><div id="result" class="muted">未取得</div></div></details>
   </div>
 </div>
 
