@@ -557,10 +557,12 @@ function ring(label,v,c){let vv=v==null?0:Math.max(0,Math.min(100,Number(v)));re
 function barRow(label,v){return `<div class="barrow"><span>${label}</span><div class="track"><i style="width:${v==null?0:Math.max(0,Math.min(100,Number(v)))}%"></i></div><b>${num(v)}</b></div>`}
 function dnaBox(label,v,desc){return `<div class="dnaBox ${(v||0)>=70?'hot':''}"><span>${label}</span><b>${num(v)}</b><span>${desc}</span></div>`}
 function renderHorse(x){if(!x){$('horseDetail').innerHTML='<span class="muted">ランキングから馬を選択してください。</span>';return}let rec=x.jockey_has_data&&x.jockey_record?.length===4?x.jockey_record.join('-'):'—',finishes=x.recent_finishes?.length?x.recent_finishes.join('・'):'—',phase=last?.signal_phase||'WAIT',score=x.adaptive_score??x.scope_score,accelDesc=phase==='CANDIDATE'?'15→10分の初動':phase==='SHORTLIST'?'10→5分を含む加速':phase==='LATE UPDATE'?'5→4分の急変':(x.late_4m_ready?'5→4→3分の加速':'4分欠損・5→3で暫定');$('horseDetail').innerHTML=`<div class="horseConsoleGrid"><div class="subcard"><div class="subhead"><b>選択馬の詳細</b><small>${esc(phase)}</small></div><div class="selTop">${waku(x.frame,x.horse,true)}<div class="selName"><b>${esc(x.name||'')}</b><small>${x.pop}人気 · ${esc(x.jockey||'騎手—')} · ${esc(x.style||'脚質—')}</small></div><div class="bigScope">${num(score)}</div></div><div class="rings">${ring('SCOPE',score,'#f1c95d')}${ring('DNA',x.dna_score,'#b996ff')}${ring('EDGE',x.edge_score,'#55d99a')}${ring('FLOW',x.flow_score,'#3bd6d0')}${ring('RACE FLOW',x.race_flow_score,'#7bc8ff')}</div><div class="whyBox"><b>評価理由</b><div>・${esc(topReason(x))}<br>・${flowText(x).replace(/<[^>]+>/g,'')}<br>・近走 ${esc(finishes)} / 騎手×馬 ${esc(rec)}</div></div><div class="metaGrid"><div class="metaBox"><span>基礎SCOPE</span><b>${num(x.scope_score)}</b></div><div class="metaBox"><span>学習シグナル</span><b>${x.model_signal==null?'—':num(x.model_signal)}</b></div><div class="metaBox"><span>学習反映</span><b>${num(x.model_weight)}%</b></div><div class="metaBox"><span>データ充足</span><b>${num(x.data_confidence)}%</b></div></div></div><div class="subcard"><div class="subhead"><b>ODDS DNA</b><small>70↑ 強い違和感</small></div><div class="dnaBars">${barRow('GAP / 断層',x.gap_score)}${barRow('ISOLATION',x.isolation_score)}${barRow('FLOAT / 浮き',x.float_score)}${barRow('CROSS',x.cross_score)}${barRow('POTUN',x.potun_score)}${barRow('ACCEL',x.accel_score)}</div><div class="note" style="margin-top:9px">ACCEL：${esc(accelDesc)}。市場の異常構造と直前加速を同時に見ます。</div><div class="abilityBars" style="margin-top:9px">${barRow('近走',x.form_score)}${barRow('距離',x.distance_score)}${barRow('コース',x.course_score)}${barRow('騎手',x.jockey_score)}${barRow('展開適合',x.race_flow_score??x.pace_score)}${barRow('状態',x.condition_score)}</div></div><div class="subcard"><div class="subhead"><b>MARKET TAPE</b><small>単勝 15→10→5→4→3</small></div>${sparkSvg(x)}<div class="chartMeta">${[['15',x.odds15],['10',x.odds10],['5',x.odds5],['4',x.odds4],['3',x.odds3]].map(z=>`<div><span>${z[0]}分前</span><b>${dec(z[1])}</b></div>`).join('')}</div><div class="metaGrid"><div class="metaBox"><span>現在フェーズ</span><b>${esc(phase)}</b></div><div class="metaBox"><span>SIGNAL LEVEL</span><b>${esc(gradeMeta(x).code+' '+gradeMeta(x).label)} / ${num(x.signal_index)}</b></div></div><div class="note" style="margin-top:9px">候補は10分前から表示し、5分・4分・3分のオッズ変化で段階的に入れ替えます。3分前FINALで学習モデルを安全条件付きで反映します。</div></div></div>`}
-let queueOpenDates=new Set(),queueDatesInitialized=false;
-async function load(){try{
- let r=await fetch('/api/races',{cache:'no-store'}),j=await r.json();
- if(!r.ok||j.error)throw new Error(j.error||'HTTP '+r.status);
+let queueOpenDates=new Set(),queueDatesInitialized=false,queueLimit=60,queueHasMore=false,queueLoadingMore=false;
+// Past races are never hidden: the list is paged (60 at a time) and "さらに過去のレースを表示" loads older ones.
+async function fetchRaces(total){let out=[],before=null,more=false;while(out.length<total){let n=Math.min(200,total-out.length);let u='/api/races?limit='+n+'&nocache='+Date.now()+(before?'&before='+encodeURIComponent(before):'');let r=await fetch(u,{cache:'no-store'}),j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'HTTP '+r.status);out=out.concat(j.races||[]);more=!!j.has_more;if(!more||!j.next_before)break;before=j.next_before}return {races:out,more}}
+async function loadMoreRaces(btn){if(queueLoadingMore)return;queueLoadingMore=true;if(btn){btn.disabled=true;btn.textContent='読込中…'}const prev=queueLimit;queueLimit+=60;try{await load(true)}catch(e){queueLimit=prev}finally{queueLoadingMore=false}}
+async function load(strict=false){try{
+ let j=await fetchRaces(queueLimit);queueHasMore=j.more;
  let a=(j.races||[]).filter(x=>x.date!=='2026-10-07'&&x.status!=='cancelled'),groups=new Map();
  for(const x of a){const d=String(x.date||'日付未設定');if(!groups.has(d))groups.set(d,[]);groups.get(d).push(x)}
  const dates=[...groups.keys()].sort((a,b)=>b.localeCompare(a,'ja'));
@@ -570,11 +572,12 @@ async function load(){try{
   const rows=groups.get(d),opened=queueOpenDates.has(d);
   const cards=rows.map(x=>`<article class="race"><div class="raceTop"><div><div class="raceTitle">${esc(x.baba_name)} ${x.race}R</div><div class="muted">${esc(x.date)}　${esc(x.start_iso.slice(11,16))}</div></div><span class="mode">${esc(x.status)}</span></div><div class="chips">${chip(15,x.current_slots||[])}${chip(10,x.current_slots||[])}${chip(5,x.current_slots||[])}${chip(4,x.current_slots||[])}${chip(3,x.current_slots||[])}</div><div class="raceBtns"><button data-act="show" data-key="${encodeURIComponent(x.race_key)}">詳細を見る</button><button class="cancel" data-act="cancel" data-key="${encodeURIComponent(x.race_key)}">取消</button></div></article>`).join('');
   return `<details class="queueDay" data-date="${esc(d)}" ${opened?'open':''}><summary class="queueDayHeader"><span class="queueDayDate">${esc(d)}</span><span class="queueDayCount">${rows.length}レース</span><span class="queueDayArrow">⌄</span></summary><div class="queueDayRaces">${cards}</div></details>`
- }).join(''):'<span class="muted">予約中のレースはありません</span>';
+ }).join('')+(queueHasMore?'<button id="moreRaces" style="width:100%;margin-top:10px">さらに過去のレースを表示</button>':''):'<span class="muted">予約中のレースはありません</span>';
  list.querySelectorAll('details.queueDay').forEach(el=>el.addEventListener('toggle',()=>{
   const d=el.dataset.date;if(el.open)queueOpenDates.add(d);else queueOpenDates.delete(d);
  }));
-}catch(e){$('list').innerHTML=`<span class="muted">一覧取得失敗：${esc(e.message)}</span>`}}
+ const more=$('moreRaces');if(more)more.onclick=()=>loadMoreRaces(more);
+}catch(e){if(strict){alert('一覧取得失敗：'+e.message);throw e}$('list').innerHTML=`<span class="muted">一覧取得失敗：${esc(e.message)}</span>`}}
 async function refreshProfile(k){if(profileRefreshing)return;profileRefreshing=true;try{await fetch('/api/profile-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race_key:k})});await show(k,true)}catch(e){}finally{profileRefreshing=false}}
 function renderPlaceValue(rows,phase,stored){
  const el=$('placeValueRows');if(!el)return;
@@ -620,13 +623,10 @@ async function cancelR(k){
  try{
   const r=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({race_key:k})});
   const j=await r.json();
-  if(!r.ok||!j.ok)throw new Error(j.error||'HTTP '+r.status);
-  const verify=await fetch('/api/races?nocache='+Date.now(),{cache:'no-store'});
-  if(!verify.ok)throw new Error('取消後の予約一覧を取得できません');
-  const q=await verify.json();
-  if(q.error)throw new Error(q.error);
-  if((q.races||[]).some(x=>x.race_key===k))throw new Error('サーバーの予約一覧に残っています');
+  if(!r.ok||!j.ok||j.status!=='cancelled')throw new Error(j.error||'HTTP '+r.status);
+  // The server re-reads the row and confirms status='cancelled' before answering ok.
   if(cur===k){cur=null;sessionStorage.removeItem('oddsScopeCur');$('detail').style.display='none'}
+  const card=btn&&btn.closest('article.race');if(card)card.remove();
   await load();
   $('msg').textContent='予約を取り消しました';
  }catch(e){

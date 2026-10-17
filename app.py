@@ -44,6 +44,10 @@ def init():
    race_key TEXT,horse INTEGER,payload TEXT,fetched_at TEXT,
    PRIMARY KEY(race_key,horse)
  );
+ CREATE TABLE IF NOT EXISTS capture_log(
+   id BIGSERIAL PRIMARY KEY,at TEXT,race_key TEXT,slot INTEGER,kind TEXT,detail TEXT,duration_ms INTEGER,pid INTEGER
+ );
+ CREATE INDEX IF NOT EXISTS capture_log_race_at ON capture_log(race_key,at)
  """
  for stmt in schema.split(";"):
   if stmt.strip(): c.execute(stmt)
@@ -1092,49 +1096,102 @@ def parse_result(s):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])];nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
   if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18:rows.append((nums[0],nums[2]))
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
+_RESULT_RETRY={}
+def _slot_soon(mins,ahead=1.5):
+ """True when a capture window is open now or opens within `ahead` minutes."""
+ steps=int(ahead/0.25)
+ return any(capture_slot(mins-i*0.25) is not None for i in range(steps+1))
+
+def _write_capture_log(rows):
+ # Diagnostics only: a logging failure must never affect odds capture.
+ if not rows:return
+ try:
+  c=con()
+  for row in rows:
+   c.execute("INSERT INTO capture_log(at,race_key,slot,kind,detail,duration_ms,pid) VALUES(%s,%s,%s,%s,%s,%s,%s)",row)
+  c.commit();c.close()
+ except Exception:
+  pass
+
 def due():
- now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
- # Avoid running slow result parsing or model training during live capture.
- active_upcoming=any(datetime.fromisoformat(x['start_iso']) >= now-timedelta(minutes=3) for x in rr)
- for r in rr:
-  mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
-  # Prioritize the current acquisition slot and avoid 5 unnecessary DB round trips.
-  current_slot=capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60)
-  if current_slot is not None:
-   slots=(current_slot,)
-  else:
-   slots=()
-  for slot in slots:
+ now=datetime.now(JST);pid=os.getpid();logs=[]
+ def log(key,slot,kind,detail="",ms=None):logs.append((datetime.now(JST).isoformat(),key,slot,kind,str(detail)[:500],ms,pid))
+ c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
+ watch=[]
+ try:
+  for r in rr:
+   post_time=datetime.fromisoformat(r["start_iso"])
+   mins=(post_time-datetime.now(JST)).total_seconds()/60
+   if -1<=mins<=16.5:watch.append(f'{r["race_key"]}@{mins:.2f}')
+   # Only the slot whose window is open right now is attempted. Missed slots are never backfilled.
+   slot=capture_slot(mins)
+   if slot is None:continue
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
    ex=False
    if oldrow:
     try:ex=valid_payload(json.loads(oldrow["payload"]))
-    except:ex=False
+    except Exception:ex=False
+   if ex:continue
    capture_started=datetime.now(JST)
-   post_time=datetime.fromisoformat(r["start_iso"])
-   in_window=capture_slot((post_time-capture_started).total_seconds()/60)==slot
-   if not ex and in_window:
-    try:
-     data=take(r)
-     finished=datetime.fromisoformat(data["fetched_at"])
-     if not capture_still_valid(slot,capture_started,finished,post_time):
-      ev.append(f'{r["race_key"]}:{slot}:SKIPPED_LATE')
-      continue
-     data["capture_started_at"]=capture_started.isoformat()
-     data["capture_slot"]=slot
-     c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
-      ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
-      (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
-     if slot in (10,5,4,3):save_predictions(r["race_key"],slot)
-    except Exception as e:ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
-  # Never let slow profile requests consume the narrow odds acquisition windows.
-  if not active_upcoming and mins < -10 and not r["result_checked"]:
+   if capture_slot((post_time-capture_started).total_seconds()/60)!=slot:continue
    try:
-    rs=parse_result(soup("RaceMarkTable",qfor(r)))
-    if all(rs):
-     c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,now.isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
-     store_learning_samples(r["race_key"],rs);maybe_train();ev.append(f'{r["race_key"]}:RESULT:{rs}')
-   except Exception as e:ev.append("ERR result "+str(e))
+    data=take(r)
+    finished=datetime.fromisoformat(data["fetched_at"])
+    ms=int((finished-capture_started).total_seconds()*1000)
+    if not capture_still_valid(slot,capture_started,finished,post_time):
+     ev.append(f'{r["race_key"]}:{slot}:SKIPPED_LATE')
+     log(r["race_key"],slot,"SKIPPED_LATE",f'start={(post_time-capture_started).total_seconds()/60:.2f}m end={(post_time-finished).total_seconds()/60:.2f}m',ms)
+     continue
+    data["capture_started_at"]=capture_started.isoformat()
+    data["capture_slot"]=slot
+    c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
+     ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
+     (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
+    log(r["race_key"],slot,"OK",f'start={(post_time-capture_started).total_seconds()/60:.2f}m counts={data.get("counts")}',ms)
+    if slot in (10,5,4,3):
+     try:save_predictions(r["race_key"],slot)
+     except Exception as e:
+      ev.append(f"ERR predict {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}");log(r["race_key"],slot,"ERR_PREDICT",f"{type(e).__name__}: {e}")
+   except Exception as e:
+    ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
+    log(r["race_key"],slot,"ERR",f"{type(e).__name__}: {e}",int((datetime.now(JST)-capture_started).total_seconds()*1000))
+  # Slow work (profiles, results, training) runs only when no capture window opens soon.
+  busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
+  if not busy:
+   for r in rr:
+    mins=(datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60
+    if 16<=mins<=360:
+     try:
+      if not load_profiles(r["race_key"]):
+       get_profiles(r);ev.append(f'{r["race_key"]}:PROFILE');log(r["race_key"],None,"PROFILE")
+       break  # at most one profile download per tick
+     except Exception as e:ev.append("ERR profile "+str(e));log(r["race_key"],None,"ERR_PROFILE",str(e))
+  busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
+  if not busy:
+   # Results are looked up in their own query: the capture query above only covers races up to
+   # 6 minutes after post time, so results must not depend on it.
+   now2=datetime.now(JST)
+   c=con();pend=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND COALESCE(result_checked,0)=0 AND start_iso <= %s AND start_iso >= %s ORDER BY start_iso DESC LIMIT 20",((now2-timedelta(minutes=10)).isoformat(),(now2-timedelta(days=7)).isoformat())).fetchall()];c.close()
+   attempts=0
+   for r in pend:
+    if attempts>=2:break
+    try:mins=(datetime.fromisoformat(r["start_iso"])-now2).total_seconds()/60
+    except Exception:continue
+    if mins>=-10 or r.get("result_checked"):continue
+    last_try=_RESULT_RETRY.get(r["race_key"])
+    if last_try and now2-last_try<timedelta(minutes=5):continue
+    _RESULT_RETRY[r["race_key"]]=now2;attempts+=1
+    try:
+     rs=parse_result(soup("RaceMarkTable",qfor(r)))
+     if all(rs):
+      c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
+      n=store_learning_samples(r["race_key"],rs);tr=maybe_train();ev.append(f'{r["race_key"]}:RESULT:{rs}')
+      log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}")
+     else:log(r["race_key"],None,"RESULT_PENDING",str(rs))
+    except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
+ finally:
+  if watch:log(None,None,"TICK"," ".join(watch))
+  _write_capture_log(logs)
  return ev
 
 @app.route("/")
@@ -1171,34 +1228,49 @@ def reserve():
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 @app.route("/api/races")
 def races():
- # Queue endpoint must stay lightweight. Full hybrid ranking is computed only
- # when the user opens Detail (/api/status). This prevents one queue refresh
- # from opening hundreds of Supabase connections across historical races.
+ # Queue/history endpoint. All non-cancelled races are listed except 2026-10-07 (removed date),
+ # newest first, with cursor pagination so older history stays reachable. Snapshots/results are
+ # loaded with one query each for the page instead of two queries per race.
  try:
-  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' AND date!=%s ORDER BY start_iso DESC LIMIT 200",("2026-10-07",)).fetchall()]
+  limit=max(1,min(200,int(request.args.get("limit") or 60)))
+  before=request.args.get("before")
+  want_stages=request.args.get("stages")=="1"
+  q="SELECT * FROM races WHERE status!='cancelled' AND date!=%s";params=["2026-10-07"]
+  if before:
+   # Cursor "start_iso|race_key" keeps races with identical post times from being skipped.
+   b_iso,_,b_key=before.partition("|")
+   if b_key:q+=" AND (start_iso,race_key) < (%s,%s)";params+= [b_iso,b_key]
+   else:q+=" AND start_iso < %s";params.append(b_iso)
+  q+=" ORDER BY start_iso DESC,race_key DESC LIMIT %s";params.append(limit+1)
+  c=con();rr=[dict(x) for x in c.execute(q,params).fetchall()]
+  has_more=len(rr)>limit;rr=rr[:limit]
+  keys=[r["race_key"] for r in rr];snaps={};results={}
+  if keys:
+   for x in c.execute("SELECT race_key,slot,payload FROM snapshots WHERE race_key = ANY(%s)",(keys,)).fetchall():snaps.setdefault(x["race_key"],[]).append(x)
+   for x in c.execute("SELECT * FROM results WHERE race_key = ANY(%s)",(keys,)).fetchall():results[x["race_key"]]=dict(x)
+  c.close()
   out=[]
   for r in rr:
    try:
-    ss=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(r["race_key"],)).fetchall()
     RAW={};S={}
-    for x in ss:
+    for x in snaps.get(r["race_key"],[]):
      try:
       p=json.loads(x["payload"]);RAW[str(x["slot"])]=p
       if valid_payload(p):S[str(x["slot"])]=p
      except Exception:
       pass
     stages={}
-    if "15" in S:stages["15"]=point_signals(S["15"])
-    if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
-    if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
-    if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
-    if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
-    rs=c.execute("SELECT * FROM results WHERE race_key=%s",(r["race_key"],)).fetchone();result=dict(rs) if rs else None
-    out.append({**r,"slots":[int(x) for x in RAW],"current_slots":[int(x) for x in S],"legacy":bool(set(RAW)-set(S)),"stages":stages,"result":result})
+    if want_stages:
+     if "15" in S:stages["15"]=point_signals(S["15"])
+     if "10" in S:stages["10"]=point_signals(S["10"],S.get("15"))
+     if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
+     if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
+     if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
+    out.append({**r,"slots":[int(x) for x in RAW],"current_slots":[int(x) for x in S],"legacy":bool(set(RAW)-set(S)),"stages":stages,"result":results.get(r["race_key"])})
    except Exception as e:
     # One malformed historical race must never take down the entire queue.
     out.append({**r,"slots":[],"stages":{},"result":None,"queue_warning":str(e)[:160]})
-  c.close();return jsonify(races=out)
+  return jsonify(races=out,has_more=has_more,next_before=(f'{rr[-1]["start_iso"]}|{rr[-1]["race_key"]}' if has_more and rr else None),limit=limit)
  except Exception as e:
   try:c.close()
   except Exception:pass
@@ -1209,47 +1281,99 @@ def cancel():
   key=request.get_json(force=True)["race_key"]
   c=con()
   try:
+   # Only the reservation status changes. Snapshots, predictions, results and learning data are kept.
    cur=c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s RETURNING race_key",(key,))
    changed=cur.fetchone()
    c.commit()
+   after=c.execute("SELECT status FROM races WHERE race_key=%s",(key,)).fetchone() if changed else None
   finally:
    c.close()
   if not changed:return jsonify(ok=False,error="予約が見つかりません。画面を更新してください。"),404
-  return jsonify(ok=True,race_key=key,removed=True)
+  if not after or after["status"]!="cancelled":return jsonify(ok=False,error="取消を確認できませんでした。画面を更新してください。"),500
+  return jsonify(ok=True,race_key=key,removed=True,status=after["status"])
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 # 定期処理はバックグラウンドで動かし、/api/tick はすぐ返す（gunicornの60秒タイムアウトで落ちないように）
 import threading
 _tick_lock=threading.Lock()
-_tick_state={"running":False,"started":None,"finished":None,"events":None,"error":None}
+_tick_state={"running":False,"started":None,"finished":None,"events":None,"error":None,"source":None,"pid":None}
+_PROCESS_STARTED=datetime.now(JST).isoformat()
+_loop_state={"pid":None,"started":None,"beat":None,"thread":None,"restarts":0}
+_loop_guard=threading.Lock()
 def _run_due():
  try:
   ev=due();_tick_state.update(events=ev,error=None)
  except Exception as e:
-  _tick_state.update(error=str(e))
+  _tick_state.update(error=f"{type(e).__name__}: {str(e)[:300]}")
  finally:
   _tick_state.update(running=False,finished=datetime.now(JST).isoformat());_tick_lock.release()
-# サーバーが起きている間は、自分で1分ごとに定期処理を回す（cron-job.orgは起こすだけでよい）
-# 15秒ごとに一定の間隔で確認する（前の処理が続いていればその回は見送り）。
+def _start_tick(source):
+ if _tick_lock.acquire(blocking=False):
+  _tick_state.update(running=True,started=datetime.now(JST).isoformat(),source=source,pid=os.getpid())
+  threading.Thread(target=_run_due,daemon=True).start()
+  return True
+ return False
+# サーバーが起きている間は、自分で15秒ごとに定期処理を回す（cron-job.orgは起こすだけでよい）
 # 4分前などの取得窓は1分幅しかないため、処理時間に関係なく窓の中で必ず確認できるようにする。
 def _auto_loop():
  wait=threading.Event()
  while True:
   wait.wait(15)
-  try:
-   if _tick_lock.acquire(blocking=False):
-    _tick_state.update(running=True,started=datetime.now(JST).isoformat())
-    threading.Thread(target=_run_due,daemon=True).start()
-  except Exception as e:
-   _tick_state.update(error=str(e))
-threading.Thread(target=_auto_loop,daemon=True).start()
+  _loop_state["beat"]=datetime.now(JST).isoformat()
+  try:_start_tick("loop")
+  except Exception as e:_tick_state.update(error=str(e))
+def ensure_auto_loop():
+ """Start the 15-second loop in THIS process. Threads do not survive fork (gunicorn --preload,
+ worker restarts), so the loop is (re)started per process and whenever its thread has died."""
+ global _tick_lock
+ pid=os.getpid();t=_loop_state.get("thread")
+ if _loop_state["pid"]==pid and t is not None and t.is_alive():return
+ with _loop_guard:
+  t=_loop_state.get("thread")
+  if _loop_state["pid"]==pid and t is not None and t.is_alive():return
+  if _loop_state["pid"] is not None and _loop_state["pid"]!=pid:
+   _tick_lock=threading.Lock()  # inherited lock state from the parent process is meaningless here
+   _tick_state.update(running=False)
+  elif _loop_state["pid"]==pid:
+   _loop_state["restarts"]+=1
+  t=threading.Thread(target=_auto_loop,daemon=True,name="odds-auto-loop")
+  _loop_state.update(pid=pid,started=datetime.now(JST).isoformat(),beat=None,thread=t)
+  t.start()
+ensure_auto_loop()
+@app.before_request
+def _keep_auto_loop_alive():
+ try:ensure_auto_loop()
+ except Exception:pass
+def _scheduler_info():
+ t=_loop_state.get("thread")
+ return {"pid":os.getpid(),"process_started":_PROCESS_STARTED,"loop_pid":_loop_state["pid"],"loop_alive":bool(t is not None and t.is_alive() and _loop_state["pid"]==os.getpid()),
+         "loop_started":_loop_state["started"],"loop_beat":_loop_state["beat"],"loop_restarts":_loop_state["restarts"]}
 @app.route("/api/tick",methods=["GET","POST"])
 def tick():
  now=datetime.now(JST).isoformat()
- if _tick_lock.acquire(blocking=False):
-  _tick_state.update(running=True,started=now)
-  threading.Thread(target=_run_due,daemon=True).start()
-  return jsonify(ok=True,started=True,at=now,last=dict(_tick_state))
- return jsonify(ok=True,started=False,at=now,last=dict(_tick_state))
+ started=_start_tick("http")
+ last={k:v for k,v in _tick_state.items()}
+ return jsonify(ok=True,started=started,at=now,last=last,scheduler=_scheduler_info())
+@app.route("/api/capture-log")
+def capture_log():
+ # Read-only diagnostics: why a slot was or was not captured.
+ try:
+  key=request.args.get("race_key");limit=max(1,min(1000,int(request.args.get("limit") or 300)))
+  c=con()
+  if key:
+   rows=[dict(x) for x in c.execute("SELECT at,race_key,slot,kind,detail,duration_ms,pid FROM capture_log WHERE race_key=%s OR (race_key IS NULL AND kind='TICK' AND detail LIKE %s) ORDER BY at DESC LIMIT %s",(key,f"%{key}@%",limit)).fetchall()]
+   snaps=[]
+   for x in c.execute("SELECT slot,fetched_at,payload FROM snapshots WHERE race_key=%s ORDER BY slot DESC",(key,)).fetchall():
+    try:p=json.loads(x["payload"])
+    except Exception:p={}
+    snaps.append({"slot":x["slot"],"fetched_at":x["fetched_at"],"capture_started_at":p.get("capture_started_at"),"valid":valid_payload(p)})
+   race=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone()
+   c.close();return jsonify(ok=True,race=dict(race) if race else None,snapshots=snaps,log=rows,scheduler=_scheduler_info())
+  rows=[dict(x) for x in c.execute("SELECT at,race_key,slot,kind,detail,duration_ms,pid FROM capture_log WHERE kind!='TICK' ORDER BY at DESC LIMIT %s",(limit,)).fetchall()]
+  c.close();return jsonify(ok=True,log=rows,scheduler=_scheduler_info())
+ except Exception as e:
+  try:c.close()
+  except Exception:pass
+  return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/status")
 def status():
  try:
