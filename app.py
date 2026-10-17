@@ -1094,7 +1094,8 @@ def parse_result(s):
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 def due():
  now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
- profile_budget=2  # avoid making one cron tick wait on every future race at once
+ # Avoid running slow result parsing or model training during live capture.
+ active_upcoming=any(datetime.fromisoformat(x['start_iso']) >= now-timedelta(minutes=3) for x in rr)
  for r in rr:
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
   # Prioritize the current acquisition slot and avoid 5 unnecessary DB round trips.
@@ -1125,9 +1126,9 @@ def due():
       ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
      if slot in (10,5,4,3):save_predictions(r["race_key"],slot)
-    except Exception as e:ev.append("ERR snapshot "+str(e))
+    except Exception as e:ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
   # Never let slow profile requests consume the narrow odds acquisition windows.
-  if mins < -3 and not r["result_checked"]:
+  if not active_upcoming and mins < -10 and not r["result_checked"]:
    try:
     rs=parse_result(soup("RaceMarkTable",qfor(r)))
     if all(rs):
