@@ -1175,7 +1175,7 @@ def races():
  # when the user opens Detail (/api/status). This prevents one queue refresh
  # from opening hundreds of Supabase connections across historical races.
  try:
-  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s ORDER BY start_iso DESC LIMIT 50",((datetime.now(JST)-timedelta(hours=1)).isoformat(),)).fetchall()]
+  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status!='cancelled' AND date!=%s ORDER BY start_iso DESC LIMIT 200",("2026-10-07",)).fetchall()]
   out=[]
   for r in rr:
    try:
