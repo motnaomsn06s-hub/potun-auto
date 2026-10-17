@@ -615,17 +615,25 @@ function renderStatus(j){
 async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';if(!silent)$('detail').scrollIntoView({behavior:'smooth'});try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
 async function cancelR(k){
  if(!confirm('この予約を取り消しますか？'))return;
+ const btn=[...document.querySelectorAll('[data-act="cancel"]')].find(b=>decodeURIComponent(b.dataset.key||'')===k);
+ if(btn){btn.disabled=true;btn.textContent='取消中…'}
  try{
-  const r=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race_key:k})});
+  const r=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({race_key:k})});
   const j=await r.json();
   if(!r.ok||!j.ok)throw new Error(j.error||'HTTP '+r.status);
+  const verify=await fetch('/api/races?nocache='+Date.now(),{cache:'no-store'});
+  if(!verify.ok)throw new Error('取消後の予約一覧を取得できません');
+  const q=await verify.json();
+  if(q.error)throw new Error(q.error);
+  if((q.races||[]).some(x=>x.race_key===k))throw new Error('サーバーの予約一覧に残っています');
   if(cur===k){cur=null;sessionStorage.removeItem('oddsScopeCur');$('detail').style.display='none'}
   await load();
-  const verify=await fetch('/api/races',{cache:'no-store'});
-  if(!verify.ok)throw new Error('取消後の一覧を確認できません');
-  const q=await verify.json();
-  if((q.races||[]).some(x=>x.race_key===k))throw new Error('取消後も予約が残っています。サーバーの状態を確認してください');
- }catch(e){alert('取消できませんでした：'+e.message);$('msg').textContent='取消できませんでした：'+e.message}
+  $('msg').textContent='予約を取り消しました';
+ }catch(e){
+  alert('予約取消に失敗しました：'+e.message);
+  $('msg').textContent='予約取消に失敗しました：'+e.message;
+  if(btn){btn.disabled=false;btn.textContent='取消'}
+ }
 }
 
 document.addEventListener('click',e=>{let sort=e.target.closest('.rankTool');if(sort){rankMode=sort.dataset.rank||'scope';if(last&&!last.legacy?.active)renderRanking(last.rankings||[]);return}let b=e.target.closest('[data-act]');if(b){let k=decodeURIComponent(b.dataset.key||'');b.dataset.act==='show'?show(k):cancelR(k);return}let row=e.target.closest('.rrow[data-horse]');if(row&&last){selectedHorse=Number(row.dataset.horse);renderRanking(last.rankings||[]);renderHorse((last.rankings||[]).find(x=>x.horse===selectedHorse))}})
