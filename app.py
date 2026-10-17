@@ -1206,7 +1206,16 @@ def races():
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
  try:
-  key=request.get_json(force=True)["race_key"];c=con();c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s",(key,));c.commit();c.close();return jsonify(ok=True)
+  key=request.get_json(force=True)["race_key"]
+  c=con()
+  try:
+   cur=c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s RETURNING race_key",(key,))
+   changed=cur.fetchone()
+   c.commit()
+  finally:
+   c.close()
+  if not changed:return jsonify(ok=False,error="予約が見つかりません。画面を更新してください。"),404
+  return jsonify(ok=True,race_key=key,removed=True)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 # 定期処理はバックグラウンドで動かし、/api/tick はすぐ返す（gunicornの60秒タイムアウトで落ちないように）
 import threading
