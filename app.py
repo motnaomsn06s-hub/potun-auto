@@ -1097,7 +1097,13 @@ def due():
  profile_budget=2  # avoid making one cron tick wait on every future race at once
  for r in rr:
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
-  for slot in (15,10,5,4,3):
+  # Prioritize the current acquisition slot and avoid 5 unnecessary DB round trips.
+  current_slot=capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60)
+  if current_slot is not None:
+   slots=(current_slot,)
+  else:
+   slots=()
+  for slot in slots:
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
    ex=False
    if oldrow:
@@ -1121,11 +1127,6 @@ def due():
      if slot in (10,5,4,3):save_predictions(r["race_key"],slot)
     except Exception as e:ev.append("ERR snapshot "+str(e))
   # Never let slow profile requests consume the narrow odds acquisition windows.
-  if not any(capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60)==slot for slot in (15,10,5,4,3)) and 16<=mins<=360 and profile_budget>0:
-   try:
-    if not load_profiles(r["race_key"]):
-     get_profiles(r);profile_budget-=1;ev.append(f'{r["race_key"]}:PROFILE')
-   except Exception as e:ev.append("ERR profile "+str(e))
   if mins < -3 and not r["result_checked"]:
    try:
     rs=parse_result(soup("RaceMarkTable",qfor(r)))
