@@ -1093,15 +1093,10 @@ def parse_result(s):
   if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18:rows.append((nums[0],nums[2]))
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 def due():
- now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved'").fetchall()];c.close();ev=[]
+ now=datetime.now(JST);c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
  profile_budget=2  # avoid making one cron tick wait on every future race at once
  for r in rr:
   mins=(datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60
-  if -5<=mins<=360 and profile_budget>0:
-   try:
-    if not load_profiles(r["race_key"]):
-     get_profiles(r);profile_budget-=1;ev.append(f'{r["race_key"]}:PROFILE')
-   except Exception as e:ev.append("ERR profile "+str(e))
   for slot in (15,10,5,4,3):
    c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
    ex=False
@@ -1125,6 +1120,12 @@ def due():
       (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
      if slot in (10,5,4,3):save_predictions(r["race_key"],slot)
     except Exception as e:ev.append("ERR snapshot "+str(e))
+  # Never let slow profile requests consume the narrow odds acquisition windows.
+  if not any(capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60)==slot for slot in (15,10,5,4,3)) and 16<=mins<=360 and profile_budget>0:
+   try:
+    if not load_profiles(r["race_key"]):
+     get_profiles(r);profile_budget-=1;ev.append(f'{r["race_key"]}:PROFILE')
+   except Exception as e:ev.append("ERR profile "+str(e))
   if mins < -3 and not r["result_checked"]:
    try:
     rs=parse_result(soup("RaceMarkTable",qfor(r)))
