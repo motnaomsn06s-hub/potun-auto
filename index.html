@@ -561,7 +561,7 @@ let queueOpenDates=new Set(),queueDatesInitialized=false;
 async function load(){try{
  let r=await fetch('/api/races',{cache:'no-store'}),j=await r.json();
  if(!r.ok||j.error)throw new Error(j.error||'HTTP '+r.status);
- let a=j.races||[],groups=new Map();
+ let a=(j.races||[]).filter(x=>x.status==='reserved'),groups=new Map();
  for(const x of a){const d=String(x.date||'日付未設定');if(!groups.has(d))groups.set(d,[]);groups.get(d).push(x)}
  const dates=[...groups.keys()].sort((a,b)=>b.localeCompare(a,'ja'));
  if(!queueDatesInitialized&&dates.length){queueOpenDates.add(dates[0]);queueDatesInitialized=true}
