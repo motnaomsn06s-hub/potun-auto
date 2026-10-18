@@ -1134,52 +1134,66 @@ def _write_capture_log(rows):
  except Exception:
   pass
 
-def due():
+def _capture_race(r):
+ ev=[];logs=[];pid=os.getpid()
+ def log(key,slot,kind,detail="",ms=None):logs.append((datetime.now(JST).isoformat(),key,slot,kind,str(detail)[:500],ms,pid))
+ watch=[]
+ try:
+  post_time=datetime.fromisoformat(r["start_iso"])
+  mins=(post_time-datetime.now(JST)).total_seconds()/60
+  if -1<=mins<=16.5:watch.append(f'{r["race_key"]}@{mins:.2f}')
+  # Only the slot whose window is open right now is attempted. Missed slots are never backfilled.
+  slot=capture_slot(mins)
+  if slot is None:return ev
+  c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
+  ex=False
+  if oldrow:
+   try:ex=valid_payload(json.loads(oldrow["payload"]))
+   except Exception:ex=False
+  if ex:return ev
+  capture_started=datetime.now(JST)
+  if capture_slot((post_time-capture_started).total_seconds()/60)!=slot:return ev
+  try:
+   data=take(r)
+   finished=datetime.fromisoformat(data["fetched_at"])
+   ms=int((finished-capture_started).total_seconds()*1000)
+   if not capture_still_valid(slot,capture_started,finished,post_time):
+    ev.append(f'{r["race_key"]}:{slot}:SKIPPED_LATE')
+    log(r["race_key"],slot,"SKIPPED_LATE",f'start={(post_time-capture_started).total_seconds()/60:.2f}m end={(post_time-finished).total_seconds()/60:.2f}m',ms)
+    return ev
+   data["capture_started_at"]=capture_started.isoformat()
+   data["capture_slot"]=slot
+   c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
+    ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
+    (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
+   log(r["race_key"],slot,"OK",f'start={(post_time-capture_started).total_seconds()/60:.2f}m counts={data.get("counts")}',ms)
+   if slot in (10,5,4,3):
+    try:save_predictions(r["race_key"],slot)
+    except Exception as e:
+     ev.append(f"ERR predict {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}");log(r["race_key"],slot,"ERR_PREDICT",f"{type(e).__name__}: {e}")
+  except Exception as e:
+   ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
+   log(r["race_key"],slot,"ERR",f"{type(e).__name__}: {e}",int((datetime.now(JST)-capture_started).total_seconds()*1000))
+ finally:_write_capture_log(logs)
+ return ev
+
+def due(capture=True,maintenance=True,async_capture=False):
  now=datetime.now(JST);pid=os.getpid();logs=[]
  def log(key,slot,kind,detail="",ms=None):logs.append((datetime.now(JST).isoformat(),key,slot,kind,str(detail)[:500],ms,pid))
  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
  watch=[]
  try:
   rr.sort(key=lambda r: (0 if capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) in (3,4) else 1, r["start_iso"]))
-  for r in rr:
-   post_time=datetime.fromisoformat(r["start_iso"])
-   mins=(post_time-datetime.now(JST)).total_seconds()/60
-   if -1<=mins<=16.5:watch.append(f'{r["race_key"]}@{mins:.2f}')
-   # Only the slot whose window is open right now is attempted. Missed slots are never backfilled.
-   slot=capture_slot(mins)
-   if slot is None:continue
-   c=con();oldrow=c.execute("SELECT payload FROM snapshots WHERE race_key=%s AND slot=%s",(r["race_key"],slot)).fetchone();c.close()
-   ex=False
-   if oldrow:
-    try:ex=valid_payload(json.loads(oldrow["payload"]))
-    except Exception:ex=False
-   if ex:continue
-   capture_started=datetime.now(JST)
-   if capture_slot((post_time-capture_started).total_seconds()/60)!=slot:continue
-   try:
-    data=take(r)
-    finished=datetime.fromisoformat(data["fetched_at"])
-    ms=int((finished-capture_started).total_seconds()*1000)
-    if not capture_still_valid(slot,capture_started,finished,post_time):
-     ev.append(f'{r["race_key"]}:{slot}:SKIPPED_LATE')
-     log(r["race_key"],slot,"SKIPPED_LATE",f'start={(post_time-capture_started).total_seconds()/60:.2f}m end={(post_time-finished).total_seconds()/60:.2f}m',ms)
-     continue
-    data["capture_started_at"]=capture_started.isoformat()
-    data["capture_slot"]=slot
-    c=con();c.execute("""INSERT INTO snapshots VALUES(%s,%s,%s,%s)
-     ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
-     (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
-    log(r["race_key"],slot,"OK",f'start={(post_time-capture_started).total_seconds()/60:.2f}m counts={data.get("counts")}',ms)
-    if slot in (10,5,4,3):
-     try:save_predictions(r["race_key"],slot)
-     except Exception as e:
-      ev.append(f"ERR predict {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}");log(r["race_key"],slot,"ERR_PREDICT",f"{type(e).__name__}: {e}")
-   except Exception as e:
-    ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
-    log(r["race_key"],slot,"ERR",f"{type(e).__name__}: {e}",int((datetime.now(JST)-capture_started).total_seconds()*1000))
+  if capture:
+   for r in rr:
+    mins=(datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60
+    if -1<=mins<=16.5:watch.append(f'{r["race_key"]}@{mins:.2f}')
+    if capture_slot(mins) is None:continue
+    if async_capture:_dispatch_capture(r)
+    else:ev.extend(_capture_race(r))
   # Slow work (profiles, results, training) runs only when no capture window opens soon.
   busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
-  if not busy:
+  if maintenance and not busy:
    for r in rr:
     mins=(datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60
     if 16<=mins<=360:
@@ -1189,7 +1203,7 @@ def due():
        break  # at most one profile download per tick
      except Exception as e:ev.append("ERR profile "+str(e));log(r["race_key"],None,"ERR_PROFILE",str(e))
   busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
-  if not busy:
+  if maintenance and not busy:
    # Results are looked up in their own query: the capture query above only covers races up to
    # 6 minutes after post time, so results must not depend on it.
    now2=datetime.now(JST)
@@ -1321,9 +1335,54 @@ _tick_state={"running":False,"started":None,"finished":None,"events":None,"error
 _PROCESS_STARTED=datetime.now(JST).isoformat()
 _loop_state={"pid":None,"started":None,"beat":None,"thread":None,"restarts":0}
 _loop_guard=threading.Lock()
+_capture_jobs={}
+_capture_jobs_guard=threading.Lock()
+_capture_pool=None
+_maintenance_running=False
+_maintenance_guard=threading.Lock()
+SCHEDULER_VERSION="nar-isolated-capture-20261018"
+
+def _leased_work(key,fn):
+ c=con()
+ try:
+  c.autocommit=True
+  row=c.execute("SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS locked",("odds-scope:"+key,)).fetchone()
+  if not row or not row["locked"]:return None
+  return fn()
+ finally:c.close() # PostgreSQL releases the session lock even after exceptions.
+
+def _dispatch_capture(r):
+ global _capture_pool
+ key=r["race_key"]
+ with _capture_jobs_guard:
+  for old,future in list(_capture_jobs.items()):
+   if future.done():
+    try:future.result()
+    except Exception as exc:_write_capture_log([(datetime.now(JST).isoformat(),old,None,"ERR_WORKER",str(exc)[:500],None,os.getpid())])
+    del _capture_jobs[old]
+  if key in _capture_jobs or len(_capture_jobs)>=3:return False
+  if _capture_pool is None:_capture_pool=ThreadPoolExecutor(max_workers=3,thread_name_prefix="odds-capture")
+  _capture_jobs[key]=_capture_pool.submit(_leased_work,"capture:"+key,lambda:_capture_race(r))
+  return True
+
+def _run_maintenance():
+ global _maintenance_running
+ try:_leased_work("maintenance",lambda:due(capture=False))
+ except Exception as exc:_write_capture_log([(datetime.now(JST).isoformat(),None,None,"ERR_MAINTENANCE",str(exc)[:500],None,os.getpid())])
+ finally:
+  with _maintenance_guard:_maintenance_running=False
+
+def _start_maintenance():
+ global _maintenance_running
+ with _maintenance_guard:
+  if _maintenance_running:return
+  _maintenance_running=True
+  threading.Thread(target=_run_maintenance,daemon=True,name="odds-maintenance").start()
+
 def _run_due():
  try:
-  ev=due();_tick_state.update(events=ev,error=None)
+  ev=due(maintenance=False,async_capture=True);_tick_state.update(events=ev,error=None)
+  _start_maintenance()
  except Exception as e:
   _tick_state.update(error=f"{type(e).__name__}: {str(e)[:300]}")
  finally:
@@ -1367,7 +1426,7 @@ def _keep_auto_loop_alive():
  except Exception:pass
 def _scheduler_info():
  t=_loop_state.get("thread")
- return {"pid":os.getpid(),"process_started":_PROCESS_STARTED,"loop_pid":_loop_state["pid"],"loop_alive":bool(t is not None and t.is_alive() and _loop_state["pid"]==os.getpid()),
+ return {"version":SCHEDULER_VERSION,"capture_workers":sum(not f.done() for f in list(_capture_jobs.values())),"maintenance_running":_maintenance_running,"pid":os.getpid(),"process_started":_PROCESS_STARTED,"loop_pid":_loop_state["pid"],"loop_alive":bool(t is not None and t.is_alive() and _loop_state["pid"]==os.getpid()),
          "loop_started":_loop_state["started"],"loop_beat":_loop_state["beat"],"loop_restarts":_loop_state["restarts"]}
 @app.route("/api/tick",methods=["GET","POST"])
 def tick():
