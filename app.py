@@ -77,8 +77,21 @@ def init():
 init()
 
 def soup(path,q):
- r=requests.get(BASE+path,params=q,headers=UA,timeout=20);r.raise_for_status();r.encoding=r.apparent_encoding or r.encoding
- return BeautifulSoup(r.text,"html.parser")
+ # Explicit diagnostics: do not turn network/HTTP failures into empty odds.
+ from requests.adapters import HTTPAdapter
+ from urllib3.util.retry import Retry
+ session=requests.Session()
+ retry=Retry(total=2,connect=2,read=1,backoff_factor=.35,status_forcelist=(429,500,502,503,504),allowed_methods=frozenset(["GET"]))
+ session.mount("https://",HTTPAdapter(max_retries=retry))
+ try:
+  r=session.get(BASE+path,params=q,headers=UA,timeout=(5,15))
+  r.raise_for_status()
+  r.encoding=r.apparent_encoding or r.encoding
+  doc=BeautifulSoup(r.text,"html.parser")
+  if not doc.select("table"):
+   raise RuntimeError(f"NAR_NO_TABLE page={path} status={r.status_code} bytes={len(r.content)} url={r.url}")
+  return doc
+ finally:session.close()
 _CONDITION_CACHE={}
 def _extract_race_conditions(doc):
  """Parse only explicitly labelled official NAR conditions."""
@@ -627,15 +640,18 @@ def take(r):
  # Parallel retrieval cuts the snapshot delay while keeping each market independently optional.
  with ThreadPoolExecutor(max_workers=4) as ex:
   fut={ex.submit(soup,path,q):k for k,path in paths.items()}
+  failures={}
   for f in as_completed(fut):
    k=fut[f]
    try:pages[k]=f.result()
-   except Exception:pages[k]=None
- if pages.get("win") is None:raise RuntimeError("単勝オッズ取得失敗")
+   except Exception as exc:
+    pages[k]=None
+    failures[k]=f"{type(exc).__name__}: {str(exc)[:180]}"
+ if pages.get("win") is None:raise RuntimeError("単勝オッズ取得失敗 "+str(failures))
  W=win(pages["win"]);Q=combo(pages["Q"],2) if pages.get("Q") else [];E=combo(pages["E"],2) if pages.get("E") else []
  Wide=combo(pages["W"],2) if pages.get("W") else [];Trio=combo(pages["R"],3) if pages.get("R") else [];T=combo(pages["T"],3) if pages.get("T") else []
  cnt={"win":len(W),"Q":len(Q),"E":len(E),"W":len(Wide),"R":len(Trio),"T":len(T)}
- if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("主要オッズ取得不完全 "+str(cnt))
+ if len(W)<3 or min(len(Q),len(E),len(T))==0:raise RuntimeError("主要オッズ取得不完全 counts="+str(cnt)+" fetch_errors="+str(failures)+" venue="+str(q["k_babaCode"]))
  market_sum=sum(1.0/o for _,o in W if o>0)
  if not 0.55<=market_sum<=2.20:raise RuntimeError(f"単勝オッズ検証NG market_sum={market_sum:.3f} counts={cnt}")
  return {"rows":analyse(W,Q,E,T,Wide,Trio),"counts":cnt,"win_market_sum":round(market_sum,4),"parser_version":DATA_VERSION,"fetched_at":datetime.now(JST).isoformat()}
