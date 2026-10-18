@@ -1140,6 +1140,7 @@ def due():
  c=con();rr=[dict(x) for x in c.execute("SELECT * FROM races WHERE status='reserved' AND start_iso >= %s AND start_iso <= %s ORDER BY start_iso ASC",((now-timedelta(minutes=6)).isoformat(),(now+timedelta(hours=6)).isoformat())).fetchall()];c.close();ev=[]
  watch=[]
  try:
+  rr.sort(key=lambda r: (0 if capture_slot((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) in (3,4) else 1, r["start_iso"]))
   for r in rr:
    post_time=datetime.fromisoformat(r["start_iso"])
    mins=(post_time-datetime.now(JST)).total_seconds()/60
