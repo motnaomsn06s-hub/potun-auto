@@ -122,7 +122,12 @@ def race_conditions(r):
  _CONDITION_CACHE[key]=(now,result)
  return result
 
-def qfor(r):return {"k_babaCode":r["baba"],"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
+# Race IDs use netkeiba venue codes; NAR official pages use k_babaCode.
+# Keep stored race IDs unchanged and translate only outbound official requests.
+NAR_VENUE_CODES={"65":"03","35":"10","42":"18","43":"19","44":"20","45":"21","46":"22","47":"23","48":"24","50":"27","51":"28","54":"31","55":"32","30":"36"}
+def qfor(r):
+ code=str(r["baba"])
+ return {"k_babaCode":NAR_VENUE_CODES.get(code,code),"k_raceDate":r["date"].replace("-","/"),"k_raceNo":r["race"]}
 def _num(text):
  m=re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*",(text or "").replace(",",""))
  return float(m.group(1)) if m else None
@@ -1518,7 +1523,7 @@ def repair_result():
 @app.route("/api/odds-check")
 def odds_check():
  try:
-  q={"k_babaCode":request.args["baba"],"k_raceDate":request.args["date"].replace("-","/"),"k_raceNo":int(request.args["race"])}
+  q=qfor({"baba":request.args["baba"],"date":request.args["date"],"race":int(request.args["race"])})
   W=win(soup("OddsTanFuku",q));market_sum=sum(1.0/o for _,o in W if o>0)
   return jsonify(ok=bool(W) and 0.55<=market_sum<=2.20,count=len(W),market_sum=round(market_sum,4),win_odds=W)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
