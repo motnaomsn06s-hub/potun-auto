@@ -1202,6 +1202,25 @@ def due(capture=True,maintenance=True,async_capture=False):
        get_profiles(r);ev.append(f'{r["race_key"]}:PROFILE');log(r["race_key"],None,"PROFILE")
        break  # at most one profile download per tick
      except Exception as e:ev.append("ERR profile "+str(e));log(r["race_key"],None,"ERR_PROFILE",str(e))
+  # Recover learning samples from already stored results and valid odds snapshots.
+  # This is idempotent and never fabricates missing capture slots.
+  if maintenance and not busy:
+   try:
+    c=con()
+    missing=c.execute("""SELECT r.race_key, x.first_horse, x.second_horse, x.third_horse
+      FROM races r JOIN results x ON x.race_key=r.race_key
+      WHERE r.status='complete' AND NOT EXISTS
+        (SELECT 1 FROM learning_samples l WHERE l.race_key=r.race_key)
+      ORDER BY x.fetched_at DESC LIMIT 8""").fetchall()
+    c.close()
+    repaired=0
+    for item in missing:
+     n=store_learning_samples(item["race_key"],[item["first_horse"],item["second_horse"],item["third_horse"]])
+     if n:
+      repaired+=1
+      log(item["race_key"],None,"LEARNING_REPAIRED",f"samples={n}")
+    if repaired:maybe_train()
+   except Exception as exc:log(None,None,"ERR_LEARNING_REPAIR",f"{type(exc).__name__}: {exc}")
   busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
   if maintenance and not busy:
    # Results are looked up in their own query: the capture query above only covers races up to
@@ -1221,7 +1240,7 @@ def due(capture=True,maintenance=True,async_capture=False):
      rs=parse_result(soup("RaceMarkTable",qfor(r)))
      if all(rs):
       c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
-      n=store_learning_samples(r["race_key"],rs);tr=maybe_train();ev.append(f'{r["race_key"]}:RESULT:{rs}')
+      n=store_learning_samples(r["race_key"],rs);tr=maybe_train() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
       log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}")
      else:log(r["race_key"],None,"RESULT_PENDING",str(rs))
     except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
