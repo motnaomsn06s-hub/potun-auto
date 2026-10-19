@@ -1302,7 +1302,9 @@ def races():
      if "5" in S:stages["5"]=point_signals(S["5"],S.get("10"))
      if "4" in S:stages["4"]=point_signals(S["4"],S.get("5"))
      if "3" in S:stages["3"]=point_signals(S["3"],S.get("4") or S.get("5"))
-    out.append({**r,"slots":[int(x) for x in RAW],"current_slots":[int(x) for x in S],"legacy":bool(set(RAW)-set(S)),"stages":stages,"result":results.get(r["race_key"])})
+    slots=[int(x) for x in RAW];current_slots=[int(x) for x in S]
+    display_status=("complete" if r["status"]=="complete" and len(current_slots)==5 else "result_only" if r["status"]=="complete" and not current_slots else "partial" if r["status"]=="complete" else r["status"])
+    out.append({**r,"status":display_status,"result_saved":r["status"]=="complete","slots":slots,"current_slots":current_slots,"legacy":bool(set(RAW)-set(S)),"stages":stages,"result":results.get(r["race_key"])})
    except Exception as e:
     # One malformed historical race must never take down the entire queue.
     out.append({**r,"slots":[],"stages":{},"result":None,"queue_warning":str(e)[:160]})
