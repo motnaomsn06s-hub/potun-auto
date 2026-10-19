@@ -667,6 +667,6 @@ async function refreshHeaderData(){
   setTimeout(()=>{if(!refreshBusy)b.textContent='↻ 更新'},2500);
  }
 }
-(async()=>{updateClock();await load();learn();if(cur)show(cur,true)})();setInterval(updateClock,1000);setInterval(()=>{if(cur)show(cur,true)},20000);setInterval(()=>{load();learn()},60000);
+(async()=>{updateClock();await load();learn();if(cur)show(cur,true)})();setInterval(updateClock,1000);setInterval(()=>{if(cur)show(cur,true)},20000);setInterval(()=>{if(!document.hidden)load()},10000);setInterval(()=>{learn()},60000);
 </script>
 </body></html>
