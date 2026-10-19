@@ -1362,7 +1362,9 @@ def _dispatch_capture(r):
     try:future.result()
     except Exception as exc:_write_capture_log([(datetime.now(JST).isoformat(),old,None,"ERR_WORKER",str(exc)[:500],None,os.getpid())])
     del _capture_jobs[old]
-  if key in _capture_jobs or len(_capture_jobs)>=3:return False
+  if key in _capture_jobs:return False
+  # Queue all eligible races rather than silently dropping captures when three are active.
+  # Bound running workers while allowing pending futures to wait for the next available worker.
   if _capture_pool is None:_capture_pool=ThreadPoolExecutor(max_workers=3,thread_name_prefix="odds-capture")
   _capture_jobs[key]=_capture_pool.submit(_leased_work,"capture:"+key,lambda:_capture_race(r))
   return True
