@@ -1398,10 +1398,10 @@ def _start_tick(source):
 def _auto_loop():
  wait=threading.Event()
  while True:
-  wait.wait(15)
   _loop_state["beat"]=datetime.now(JST).isoformat()
   try:_start_tick("loop")
   except Exception as e:_tick_state.update(error=str(e))
+  wait.wait(15)
 def ensure_auto_loop():
  """Start the 15-second loop in THIS process. Threads do not survive fork (gunicorn --preload,
  worker restarts), so the loop is (re)started per process and whenever its thread has died."""
