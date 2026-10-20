@@ -26,7 +26,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  assert(elements.msg.textContent.includes('取り消せません'));assert(alerts.some(a=>a.includes('Load failed')));
 
  // 3. A day is grouped by venue with tabs; lamps, picks, results and cancellations render.
- const now=new Date('2026-10-20T16:50:00+09:00');
+ const now=new Date('2026-10-20T16:50:00+09:00');ctx.nsToday=()=>'2026-10-20';  // the fixture day is 'today' whatever the real date
  const R=(k,v,n,t,o)=>Object.assign({race_key:k,baba_name:v,race:n,start_iso:'2026-10-20T'+t+':00+09:00',status:'reserved',slots:[],picks:[],result:null},o||{});
  const races=[R('a1','浦和',5,'14:20',{status:'complete',slots:[15,10,5,4,3],picks:[3,2,7],result:{order:[3,2,9],places:[1,2,2]}}),
    R('a2','浦和',9,'16:35',{slots:[15,5,4,3]}),R('a3','浦和',10,'17:10',{race_name:'秋風特別',course:'左1400m',field_size:11}),
@@ -46,6 +46,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  ctx.NS.venue='盛岡';out=ctx.nsDayHTML('2026-10-20',races,now);
  assert(out.includes('ns-race off'),'cancelled race dimmed');assert(!out.includes('class="ns-race" data-race="a2"'),'other venue rows hidden');assert(out.includes('class="ns-race" data-race="b2"'));
 
+ ctx.nsToday=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
  // 4. Past days list excludes the removed 2026-10-07 and links today to the home view.
  ctx.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true,days:[{date:ctx.nsToday(),races:48,complete:20,venues:'門別・浦和'},{date:'2026-10-07',races:9,complete:9,venues:'大井'},{date:'2026-10-05',races:10,complete:10,venues:'川崎'}]})});
  await ctx.nsShowDays();
@@ -67,7 +68,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  assert.equal(J('10分前CANDIDATE待ち'),'10分前候補待ち');assert.equal(J('S PRIME'),'S 最強');assert.equal(J('FINAL順'),'最終順');
  assert.equal(J('LATE UPDATE'),'直前更新');assert.equal(J('SIGNAL LEVEL'),'シグナルの強さ');assert.equal(J('3MIN FINAL'),'3分前 最終');
  assert.equal(J('RESULT GUARD COLLECTING'),'結果による抑制 集計中');assert.equal(J('GAP · ISOLATION · POTUN'),'断層 · 孤立 · ポツン');
- assert.equal(J('ODDS DNA'),'オッズDNA');assert.equal(J('馬番 7'),'馬番 7');
+ assert.equal(J('ODDS DNA'),'オッズDNA');assert.equal(J('NO EDGE'),'明確な根拠なし');assert.equal(J('STATUS SELECTIVE'),'状態 注視');assert.equal(J('ACTIVE'),'有力');assert.equal(J('馬番 7'),'馬番 7');
  // 7. Stale detail responses are not rendered after switching race.
  vm.runInContext(extract('async function show(k,silent=false)','document.addEventListener'),ctx);
  let resolveFetch;ctx.fetch=()=>new Promise(resolve=>resolveFetch=resolve);
