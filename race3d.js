@@ -114,7 +114,7 @@ function buildCourse(){halos=[];if(world){scene.remove(world);disposeGroup(world
  const railmat=mat(0xdddac9,.55);for(const lane of [-.7,15]){const points=[];for(let i=0;i<=240;i++){const p=pathAt(i/240*PERIMETER,lane);points.push(new T.Vector3(p.x,1.1,p.z))}const rail=new T.Mesh(new T.TubeGeometry(new T.CatmullRomCurve3(points,true),380,.043,4,true),railmat);world.add(rail);for(let i=0;i<96;i++){const p=pathAt(i/96*PERIMETER,lane);block(world,p.x,.55,p.z,.07,1.1,.07,railmat)}}
  addCourseMarkers();
  const finish=pathAt(FINISH,5.5);const finishLine=new T.Group();finishLine.position.set(finish.x,.018,finish.z);finishLine.rotation.y=-Math.atan2(finish.tz,finish.tx);block(finishLine,0,0,0,.20,.024,13,mat(0xf6eee0));world.add(finishLine);
- for(const lane of [-1.7,13]){const p=pathAt(FINISH,lane);block(world,p.x,2.55,p.z,.20,5.1,.20,mat(0xe7e5dc));for(let j=0;j<7;j++)block(world,p.x,4.9-j*.30,p.z,.26,.27,.26,mat(j%2?0x18212c:0xeae9da));const sign=labelTexture('FINISH','#102131','#f5d487');const m=new T.Mesh(new T.PlaneGeometry(3.8,1.1),new T.MeshBasicMaterial({map:sign,side:T.DoubleSide}));m.position.set(p.x,5.5,p.z);m.rotation.y=Math.PI/2;world.add(m)}
+ for(const lane of [-1.7,13]){const p=pathAt(FINISH,lane);block(world,p.x,2.55,p.z,.20,5.1,.20,mat(0xe7e5dc));for(let j=0;j<7;j++)block(world,p.x,4.9-j*.30,p.z,.26,.27,.26,mat(j%2?0x18212c:0xeae9da));const sign=labelTexture('ゴール','#102131','#f5d487');const m=new T.Mesh(new T.PlaneGeometry(3.8,1.1),new T.MeshBasicMaterial({map:sign,side:T.DoubleSide}));m.position.set(p.x,5.5,p.z);m.rotation.y=Math.PI/2;world.add(m)}
  // Grandstand tiers behind the home straight; repeated seat blocks stay outside the course.
  for(const side of [direction===-1?-1:1]){for(let tier=0;tier<4;tier++){block(world,0,1.2+tier*.85,side*(R+62+tier*2),90,.7,3,mat(tier%2?0x34414a:0x52616a));for(let col=0;col<30;col++)block(world,-43+col*2.9,1.65+tier*.85,side*(R+62+tier*2),2.1,.25,.7,mat(col%3?0x6d7b7a:0xbeb8a6))}block(world,0,6.1,side*(R+68),97,.22,11,mat(0x374953))}
  for(let i=0;i<10;i++){const p=pathAt(i/10*PERIMETER,21);block(world,p.x,8,p.z,.13,16,.13,mat(0x69747a));block(world,p.x,16,p.z,2.3,.6,.4,mat(0xe7dfc4))}
@@ -244,7 +244,7 @@ function render(d){ui.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute(
  }
  const metresLeft=Math.max(0,Number(rf.course?.distance||d.race?.distance||1400)*(1-clamp(p/FINISH_AT,0,1)));
  let boardText='';
- if(p>=.94)boardText='GOAL';
+ if(p>=.94)boardText='ゴール';
  else if(p>=.75){const mark=Math.ceil(metresLeft/200)*200;if(mark>=200&&mark<=1200)boardText=mark+'m'}
  else if(p>=.62)boardText='4角';
  else if(p>=.48)boardText='3角';
