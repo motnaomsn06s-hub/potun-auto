@@ -67,7 +67,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  assert.equal(J('10分前CANDIDATE待ち'),'10分前候補待ち');assert.equal(J('S PRIME'),'S 最強');assert.equal(J('FINAL順'),'最終順');
  assert.equal(J('LATE UPDATE'),'直前更新');assert.equal(J('SIGNAL LEVEL'),'シグナルの強さ');assert.equal(J('3MIN FINAL'),'3分前 最終');
  assert.equal(J('RESULT GUARD COLLECTING'),'結果による抑制 集計中');assert.equal(J('GAP · ISOLATION · POTUN'),'断層 · 孤立 · ポツン');
- assert.equal(J('ODDS DNA'),'オッズDNA');assert.equal(J('馬番 7'),'馬番 7');
+ assert.equal(J('ODDS DNA'),'オッズDNA');assert.equal(J('NO EDGE'),'明確な根拠なし');assert.equal(J('STATUS SELECTIVE'),'状態 注視');assert.equal(J('ACTIVE'),'有力');assert.equal(J('馬番 7'),'馬番 7');
  // 7. Stale detail responses are not rendered after switching race.
  vm.runInContext(extract('async function show(k,silent=false)','document.addEventListener'),ctx);
  let resolveFetch;ctx.fetch=()=>new Promise(resolve=>resolveFetch=resolve);

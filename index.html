@@ -835,7 +835,7 @@ function renderStatus(j){
     $('profileState').textContent=phase==='FINAL'?'FINAL READY':(j.profile_ready?'OFFICIAL DATA':'DATA WAIT');$('profileState').style.color=phase==='FINAL'?'#ffe57a':(j.profile_ready?'#65daa1':'#d7b45f');
     let rows=j.rankings||[];renderPlaceValue(rows,phase,j.place_value);let conf=rows.length?Math.round(rows.reduce((a,x)=>a+(Number(x.data_confidence)||0),0)/rows.length):0,mw=Math.round((j.model?.blend_weight||0)*100);
     $('confidence').textContent=`${phase} · ${j.phase_note||''} · データ充足 ${rows.length?conf+'%':'—'}${phase==='FINAL'?` · 学習 ${j.model?.status||'COLLECTING'} ${mw?mw+'%反映':'未反映'}`:''}`;
-    let rs=j.race_signal||{grade:'D',label:'LOW SIGNAL',note:'候補データ待ち',top_index:0,qualified:0};$('raceSignal').className='raceSignal grade-'+String(rs.grade||'D').toLowerCase();$('raceSignal').querySelector('b').textContent=rs.label||'LOW SIGNAL';$('raceSignal').querySelector('small').textContent=`STATUS ${rs.action||'WAIT'} · ${rs.note||''} · SIGNAL ${num(rs.top_index)} · B以上 ${rs.qualified||0}頭`;let gm=guardMeta(j.guardrail);$('guardState').textContent=gm.status;$('guardState').className='guardState '+gm.status;$('guardNote').textContent=gm.note+(j.guardrail?.races?` · 直近${j.guardrail.races}R`:``);renderRaceFlow(j.race_flow);
+    let rs=j.race_signal||{grade:'D',label:'LOW SIGNAL',note:'候補データ待ち',top_index:0,qualified:0};$('raceSignal').className='raceSignal grade-'+String(rs.grade||'D').toLowerCase();$('raceSignal').querySelector('b').textContent=(NS_SIG[rs.grade]||NS_SIG.D)[0];$('raceSignal').querySelector('small').textContent=`${(NS_SIG[rs.grade]||NS_SIG.D)[1]}　指数 ${num(rs.top_index)}　B以上 ${rs.qualified||0}頭`;let gm=guardMeta(j.guardrail);$('guardState').textContent=gm.status;$('guardState').className='guardState '+gm.status;$('guardNote').textContent=gm.note+(j.guardrail?.races?` · 直近${j.guardrail.races}R`:``);renderRaceFlow(j.race_flow);
     let showN=phase==='CANDIDATE'?5:phase==='SHORTLIST'?4:3,shown=j.predictions?.length?j.predictions:rows.slice(0,showN);$('picks').innerHTML=shown.length?shown.map(pickCard).join(''):'<span class="muted">10分前CANDIDATE待ち。候補は早めに表示し、直前データで段階的に絞ります。</span>';
     $('rankHead').innerHTML='<span>順位</span><span>馬 / 人気 / 騎手 / 脚質</span><span>単勝</span><span>DNA</span><span>GAP</span><span>POTUN</span><span>ACCEL</span><span>'+(phase==='FINAL'?'FINAL':'SCOPE')+'</span><span>SIGNAL</span>';
     if(rows.length){if(!selectedHorse||!rows.some(x=>x.horse===selectedHorse))selectedHorse=rows[0].horse;renderRanking(rows);renderHorse(rows.find(x=>x.horse===selectedHorse))}else{renderRanking([]);renderHorse(null)}
@@ -1072,9 +1072,11 @@ async function refreshHeaderData(){
   finally{refreshBusy=false;setTimeout(()=>b.classList.remove('spin'),400)}
 }
 
+// レース全体のシグナル表示（1位候補の等級）
+const NS_SIG={S:['S　最強シグナル','根拠が4つ以上そろい、指数も高い'],A:['A　有力シグナル','3つ以上の別々の根拠がそろっている'],B:['B　候補シグナル','候補として注視する水準'],C:['C　注目','根拠は限られる。順位は参考程度'],D:['D　明確な根拠なし','無理に上位3頭を本命扱いしない']};
 // 詳細画面の表示文字だけを日本語にする（判定ロジックの英語キーには触れない）
 const NS_JA=[['SIGNAL LEVEL','シグナルの強さ'],['LOW SIGNAL','弱いシグナル'],['PRIME SIGNAL','最強シグナル'],['STRONG SIGNAL','有力シグナル'],['SELECT SIGNAL','候補シグナル'],['WATCH SIGNAL','注目シグナル'],
- ['RESULT GUARD','結果による抑制'],['DATA WAIT','データ待ち'],['FINAL READY','最終確定'],['LIVE SCOPE','レース'],['LEGACY DATA','旧形式のデータ'],['LEGACY MARKET','旧形式の市場'],['OFFICIAL DATA','公式データ'],['NOT LIVE','実況ではありません'],
+ ['RESULT GUARD','結果による抑制'],['NO EDGE','明確な根拠なし'],['SELECTIVE','注視'],['ACTIVE','有力'],['DATA WAIT','データ待ち'],['FINAL READY','最終確定'],['LIVE SCOPE','レース'],['LEGACY DATA','旧形式のデータ'],['LEGACY MARKET','旧形式の市場'],['OFFICIAL DATA','公式データ'],['NOT LIVE','実況ではありません'],
  ['ODDS DNA','オッズDNA'],['RACE FLOW','展開'],['LATE UPDATE','直前更新'],['MIN FINAL','分前 最終'],['S PRIME','S 最強'],['A STRONG','A 有力'],['B SELECT','B 候補'],['C WATCH','C 注目'],['D LOW','D 弱'],
  ['CANDIDATE','候補'],['SHORTLIST','絞り込み'],['FINAL','最終'],['BASE','基準'],['COLLECTING','集計中'],['PASS','良好'],['HOLD','様子見'],['REVIEW','見直し'],['WAIT','待機'],
  ['SCOPE','総合'],['ACCEL','加速'],['ISOLATION','孤立'],['FLOAT','浮き'],['CROSS','一致'],['POTUN','ポツン'],['GAP','断層'],['FLOW','流れ'],['EDGE','優位'],['VALUE','妙味'],
