@@ -339,6 +339,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-dayhead{margin:22px 0 6px}
 .ns-dayhead h1{display:flex;align-items:baseline;gap:12px;margin:0}
 .ns-dayhead .d{font-family:var(--ns-num);font-size:46px;font-weight:500;line-height:1;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+.ns-dayhead .r{margin-left:auto;align-self:center;padding:3px 10px;border-radius:999px;border:1px solid var(--ns-sand-lo);font-size:12px;font-weight:700;letter-spacing:.08em;color:var(--ns-sand)}
 .ns-dayhead .w{font-family:var(--ns-head);font-size:16px;font-weight:700;letter-spacing:.24em;color:var(--ns-sand)}
 .ns-dayhead p{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin:8px 0 0;font-family:var(--ns-head);font-size:13px;font-weight:600;letter-spacing:.18em;color:var(--ns-mute)}
 .ns-dayhead p em{margin-left:auto;font-style:normal;font-family:var(--ns-body);font-size:12px;font-weight:500;letter-spacing:.04em;color:var(--ns-faint)}
@@ -876,6 +877,7 @@ function nsStore(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sess
 function nsToday(){return new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})}
 function nsDayLabel(d){const [y,m,dd]=String(d).split('-').map(Number);return `${m}月${dd}日（${NS_WD[new Date(Date.UTC(y,m-1,dd)).getUTCDay()]}）`}
 function nsHM(iso){return String(iso||'').slice(11,16)}
+function nsAddDays(d,n){const [y,m,dd]=String(d).split('-').map(Number);const x=new Date(Date.UTC(y,m-1,dd+n));return x.toISOString().slice(0,10)}
 function nsMins(iso,now){return (new Date(iso)-now)/60000}
 function nsVenues(races){const v=[...new Set(races.filter(r=>r.status!=='cancelled').map(r=>r.baba_name))];return v.sort((a,b)=>((NS_VENUE_ORDER.indexOf(a)+99)%99)-((NS_VENUE_ORDER.indexOf(b)+99)%99))}
 function nsFinished(r,now){return r.status==='complete'||nsMins(r.start_iso,now)<-1}
@@ -902,7 +904,9 @@ function nsBoard(races,now,isToday,selected){
   if(isToday){const nx=v=>{const r=nsNext(races.filter(x=>x.baba_name===v),now);return r?new Date(r.start_iso).getTime():Infinity};venues=venues.slice().sort((a,b)=>nx(a)-nx(b))}
   const rows=venues.map(v=>{
     const st=nsVenueStats(races,v,now,isToday),m=st.nx?nsMins(st.nx.start_iso,now):null,n=st.all.length;
+    const first=st.live.slice().sort((a,b)=>new Date(a.start_iso)-new Date(b.start_iso))[0],future=!isToday&&first&&nsMins(first.start_iso,now)>0;
     const next=st.nx?`<span class="ns-vnext"><small>次は ${st.nx.race}R</small><b>${nsHM(st.nx.start_iso)}</b></span>`
+      :future?`<span class="ns-vnext"><small>${first.race}R発走・全${st.live.length}レース</small><b>${nsHM(first.start_iso)}</b></span>`
       :`<span class="ns-vnext"><small>${isToday?'本日':'全'+st.live.length+'レース'}</small><b class="end">${isToday?'終了':'完了'}</b></span>`;
     const left=st.nx&&m<60?`<span class="ns-vleft${m<=16?' soon':''}"><b>${Math.ceil(m)}</b><small>分後</small></span>`:'<span class="ns-vleft"></span>';
     // 距離標のような目盛り：1レース1目盛り。終わった所まで線を満たし、次のレースだけ光らせる
@@ -920,7 +924,8 @@ function nsBoard(races,now,isToday,selected){
 const NS_WDL=['日曜日','月曜日','火曜日','水曜日','木曜日','金曜日','土曜日'];
 function nsDayHead(date,line){
   const [y,m,d]=String(date).split('-').map(Number),w=NS_WDL[new Date(Date.UTC(y,m-1,d)).getUTCDay()];
-  return `<header class="ns-dayhead"><h1><span class="d">${m}.${String(d).padStart(2,'0')}</span><span class="w">${w}</span></h1>${line?`<p>${line}</p>`:''}</header>`;
+  const rel=date===nsToday()?'':date===nsAddDays(nsToday(),1)?'明日':date>nsToday()?'予約済み':'';
+  return `<header class="ns-dayhead"><h1><span class="d">${m}.${String(d).padStart(2,'0')}</span><span class="w">${w}</span>${rel?`<span class="r">${rel}</span>`:''}</h1>${line?`<p>${line}</p>`:''}</header>`;
 }
 function nsNextCard(r,now){
   if(!r)return '';
@@ -936,6 +941,7 @@ function nsRow(r,now,isToday){
   if(r.status==='cancelled')state='<b>—</b>取消';
   else if(res)state=`<b>${(res.order||[]).slice(0,3).join('-')}</b>結果`;
   else if(isToday&&m>0)state=`<b class="${m<=16?'soon':''}">${m<60?Math.ceil(m)+'分':nsHM(r.start_iso)}</b>${m<60?'発走まで':''}`;
+  else if(m>0)state='<b>—</b>発走前';
   else state=m>-15?'<b>発走</b>結果待ち':'<b>—</b>結果待ち';
   const sub=[r.course,r.field_size?r.field_size+'頭':''].filter(Boolean).join('　');
   return `<button class="ns-race${r.status==='cancelled'?' off':''}" data-race="${esc(r.race_key)}"><span class="t"><b>${nsHM(r.start_iso)}</b><small>${r.race}R</small></span>
@@ -971,7 +977,11 @@ async function nsShowDays(){
   const view=$('nsView');view.innerHTML='<div class="ns-skel"></div>';
   try{const r=await fetch('/api/days',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'HTTP '+r.status);
     const today=nsToday(),days=(j.days||[]).filter(d=>d.date!=='2026-10-07');
-    view.innerHTML=`<div class="ns-title"><h1>過去の開催</h1><p>日付を押すと、競馬場ごとのレースと結果を見られます。</p></div>${days.length?`<div class="ns-days">${days.map(d=>`<a class="ns-dayrow" href="${d.date===today?'#/':'#/past/'+esc(d.date)}"><b>${nsDayLabel(d.date)}${d.date===today?'　今日':''}</b><span>${esc(d.venues||'')}</span><em>${d.complete}/${d.races}</em></a>`).join('')}</div>`:'<div class="ns-empty">まだ記録された開催はありません。</div>'}`}
+    const future=days.filter(d=>d.date>today).sort((a,b)=>a.date.localeCompare(b.date)),past=days.filter(d=>d.date<today);
+    const row=(d,tag,count)=>`<a class="ns-dayrow" href="#/past/${esc(d.date)}"><b>${nsDayLabel(d.date)}${tag?'　'+tag:''}</b><span>${esc(d.venues||'')}</span><em>${count}</em></a>`;
+    view.innerHTML=`<div class="ns-title"><h1>開催の記録</h1><p>日付を押すと、競馬場ごとのレースと結果を見られます。</p></div>
+    ${future.length?`<div class="ns-sub"><h2>予約済み</h2><small>公式の出走表から自動で予約</small></div><div class="ns-days">${future.map(d=>row(d,d.date===nsAddDays(today,1)?'明日':'',d.races+'レース')).join('')}</div>`:''}
+    <div class="ns-sub"><h2>過去の開催</h2><small>結果確定 / レース数</small></div>${past.length?`<div class="ns-days">${past.map(d=>row(d,'',d.complete+'/'+d.races)).join('')}</div>`:'<div class="ns-empty">まだ記録された開催はありません。</div>'}`}
   catch(e){view.innerHTML=`<div class="ns-err">開催日の一覧を取得できませんでした：${esc(e.message)}</div>`}
 }
 async function nsHealth(){
