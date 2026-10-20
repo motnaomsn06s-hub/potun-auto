@@ -452,6 +452,10 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-tbl td b{font-family:var(--ns-num);font-size:17px;font-weight:600}
 .ns-tbl td small{display:block;font-size:10.5px;color:var(--ns-faint)}
 .ns-tbl .up{color:var(--ns-ok)}.ns-tbl .down{color:var(--ns-miss)}
+.ns-grade{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;font-family:var(--ns-num);font-size:15px;font-weight:600;background:var(--ns-raise);color:var(--ns-ink)}
+.ns-grade.gS{background:var(--ns-sand);color:#1E1608}.ns-grade.gA{box-shadow:inset 0 0 0 1.5px var(--ns-sand);color:var(--ns-sand-hi)}
+.ns-verdict{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--ns-line-2);color:var(--ns-mute);white-space:nowrap}
+.ns-verdict.buy{border-color:#2F5E46;color:var(--ns-ok);background:#0F2219}.ns-verdict.skip{border-color:#7A3E38;color:var(--ns-miss)}
 .ns-health dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:13.5px}
 .ns-health dt{color:var(--ns-mute)}.ns-health dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
 .ns-health .ok{color:var(--ns-ok)}.ns-health .ng{color:var(--ns-miss)}
@@ -526,6 +530,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
   <section id="nsRecord" class="ns-page" hidden>
     <div class="ns-title"><h1>成績</h1><p>最終候補の3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
     <div id="learn" class="ns-block">集計を読み込んでいます</div>
+    <div id="nsSigRec"></div>
     <div id="roi"></div>
     <div id="nsFavRec"></div>
   </section>
@@ -991,7 +996,7 @@ async function nsRoute(){
   NS.route=h;
   if(page==='race'&&arg){nsShowPage('race');nsSetNav('');window.scrollTo(0,0);await show(arg);return}
   window.scrollTo(0,0);
-  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();nsFavRecord();return}
+  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();nsSigRecord();roiLoad();nsFavRecord();return}
   if(page==='more'){nsShowPage('nsMore');nsSetNav('more');NS.back='#/more';nsHealth();return}
   nsShowPage('nsView');
   if(page==='past'&&!arg){nsSetNav('past');NS.date=null;NS.back='#/past';await nsShowDays();return}
@@ -1022,6 +1027,21 @@ async function cancelR(k){
   }catch(e){
     alert('取り消せませんでした：'+e.message);$('msg').textContent='取り消せませんでした：'+e.message;
   }finally{if(btn){btn.disabled=false;btn.textContent='このレースの記録をやめる'}}
+}
+async function nsSigRecord(){
+  const el=$('nsSigRec');if(!el)return;
+  try{const x=await(await fetch('/api/signal-grades',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
+    const ci=b=>b.place_ci?`<small>${rate(b.place_ci[0])}〜${rate(b.place_ci[1])}</small>`:'<small>区間は20頭から</small>';
+    const tag=v=>`<span class="ns-verdict ${v==='買い候補'?'buy':v==='見送り'?'skip':''}">${esc(v)}</span>`;
+    const tbl=(d,showV)=>`<table class="ns-tbl"><thead><tr><th>等級</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th><th>平均人気</th>${showV?'<th>判定</th>':''}</tr></thead><tbody>${(d.by_grade||[]).map(b=>`<tr><td><b class="ns-grade g${b.grade}">${b.grade}</b></td><td>${b.horses}</td><td>${rate(b.place_rate)}</td><td><b class="${(b.place_roi||0)>=1?'up':'down'}">${b.horses?rate(b.place_roi):'—'}</b>${b.horses?ci(b):''}</td><td>${b.avg_pop==null?'—':b.avg_pop+'番'}</td>${showV?`<td>${tag(b.verdict)}</td>`:''}</tr>`).join('')}</tbody></table>`;
+    const pro=x.prospective||{},ret=x.retro||{},buy=(pro.by_grade||[]).filter(b=>b.verdict==='買い候補').map(b=>b.grade);
+    const head=buy.length?`今の時点で「買い候補」は <b>${buy.join('・')}</b> 等級です。`:`今の時点で「買い」と言える等級はありません。`;
+    el.innerHTML=`<section class="ns-block"><h2 class="ns-h2">シグナル等級ごとの成績</h2>
+    <p class="ns-note">${head}その等級がついた馬を、1頭ずつ複勝100円で買った場合の数字です。「買い候補」になるのは、発走前に記録した判定で${pro.min_buy_horses||100}頭以上たまり、複勝回収率の95%区間の下限が100%を超えた等級だけです。</p>
+    <h3 class="ns-h2" style="font-size:14px;margin-top:12px">今後の記録（${pro.races||0}レース・${pro.horses||0}頭）</h3>${tbl(pro,true)}
+    <h3 class="ns-h2" style="font-size:14px;margin-top:14px">参考：過去分の再計算（${ret.races||0}レース・${ret.horses||0}頭）</h3>${tbl(ret,false)}
+    <p class="ns-note">${x.retro_pending?`再計算中：あと${x.retro_pending}レース。`:''}過去分は、保存済みのオッズから学習モデルを使わずに等級を計算し直した参考値です。等級の基準自体が過去の傾向を見て決めたものなので、買いの判定には使いません。</p></section>`}
+  catch(e){el.innerHTML='<div class="ns-err">シグナル等級の成績を取得できませんでした。</div>'}
 }
 function nsFavCard(f){
   const el=$('nsFav');if(!el)return;const c=f&&f.check;
@@ -1102,6 +1122,6 @@ nsRoute();updateClock();
 setInterval(nsTick,1000);
 setInterval(()=>{if(!document.hidden&&NS.date&&!$('nsView').hidden)nsShowDay(NS.date,true)},15000);
 setInterval(()=>{if(cur&&NS.route.startsWith('race/'))show(cur,true)},20000);
-setInterval(()=>{if(!document.hidden&&NS.route==='record'){learn();roiLoad()}},60000);
+setInterval(()=>{if(!document.hidden&&NS.route==='record'){learn();nsSigRecord();roiLoad()}},60000);
 </script>
 </body></html>
