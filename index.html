@@ -6,7 +6,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ODDS SCOPE">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#050b13">
+<meta name="theme-color" content="#060B14">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Shippori+Mincho+B1:wght@600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <link rel="icon" type="image/png" href="/apple-touch-icon.png?v=20261013b">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20261013b">
 <title>ODDS SCOPE NAR — Ver.13.3 CINEMATIC RACE FLOW</title>
@@ -283,34 +285,253 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .placeValueHeading{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}.placeValueHeading strong{color:#ffe68a;font-size:15px}.placeValueHeading small{font-size:10px;color:#f3ca77}.placeValueHeading>span{color:#9eb1bf;font-size:11px}
 .placeValueRows{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.placeValueHorse{border:1px solid #345063;background:#071a28;border-radius:10px;padding:11px}.placeValueHorse b{font-size:17px;color:#fff}.placeValueHorse .pvMeta{color:#b5c6d2;font-size:12px;margin-top:5px}.placeValueHorse .pvScore{color:#f1c95d;font-size:12px;margin-top:7px}.placeValueFoot{color:#91a6b6;font-size:11px;line-height:1.6;margin-top:10px}
 </style>
+<style id="ns-theme">
+/* ODDS SCOPE 地方 — 「ナイターのダート」
+   夜空の紺に、照明に照らされた砂の色。見せ場はホームの発走表（全場を並べたレーン）だけで、
+   ほかは静かな帳票。中央版と同じ書体で兄弟アプリに見せる。既存の詳細画面は変数の置き換えで同じ色に揃える。 */
+:root{
+  --ns-night:#060B14;--ns-panel:#0C1524;--ns-raise:#12203A;--ns-line:#1C2B42;--ns-line-2:#2A3E5C;
+  --ns-ink:#EEF2F6;--ns-mute:#9AA9BB;--ns-faint:#6C7D92;
+  --ns-sand:#D9B26F;--ns-sand-hi:#F0D49A;--ns-sand-lo:#8F7448;
+  --ns-ok:#7ED3A6;--ns-miss:#EE8C7F;
+  --ns-head:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
+  --ns-body:"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN",Meiryo,system-ui,sans-serif;
+  --ns-num:"Barlow Condensed","Arial Narrow","Zen Kaku Gothic New","Hiragino Sans",sans-serif;
+  --ns-safe-b:env(safe-area-inset-bottom,0px);--ns-safe-t:env(safe-area-inset-top,0px);
+  /* The race page keeps its own markup; these remap its palette onto the night/sand theme. */
+  --bg:var(--ns-night);--bg2:var(--ns-panel);--panel:var(--ns-panel);--panel2:#0A1220;--panel3:var(--ns-raise);
+  --line:var(--ns-line);--line2:var(--ns-line-2);--text:var(--ns-ink);--muted:var(--ns-mute);--muted2:var(--ns-faint);
+  --gold:var(--ns-sand);--gold2:var(--ns-sand-hi);
+}
+html{background:var(--ns-night)}
+body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.app{width:auto;max-width:640px;margin:0 auto;padding:calc(4px + var(--ns-safe-t)) 16px calc(92px + var(--ns-safe-b))}
+.ns-num{font-family:var(--ns-num);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+:focus-visible{outline:2px solid var(--ns-sand);outline-offset:3px}
+[hidden]{display:none!important}
+
+/* ---------- top ---------- */
+.ns-top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;margin:0 -16px;padding:10px 16px;background:color-mix(in srgb,var(--ns-night) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--ns-line)}
+.ns-logo{display:flex;align-items:center;gap:9px;color:inherit;text-decoration:none;min-width:0}
+.ns-logo img{width:26px;height:26px;border-radius:7px;box-shadow:0 0 0 1px rgba(217,178,111,.4)}
+.ns-logo b{font-family:var(--ns-num);font-weight:600;font-size:18px;letter-spacing:.14em;white-space:nowrap}
+.ns-logo b span{margin-left:.45em;font-family:var(--ns-head);font-weight:700;letter-spacing:.08em;color:var(--ns-sand)}
+.ns-clock{margin-left:auto;font-family:var(--ns-num);font-size:15px;color:var(--ns-mute);font-variant-numeric:tabular-nums}
+.ns-icon{display:inline-grid;place-items:center;width:38px;height:38px;min-height:38px;padding:0;border-radius:50%;border:1px solid var(--ns-line-2);background:transparent;color:var(--ns-sand-hi)}
+.ns-icon svg{width:17px;height:17px}
+.ns-icon.spin svg{animation:ns-spin .8s linear infinite}
+@keyframes ns-spin{to{transform:rotate(360deg)}}
+
+/* ---------- headings ---------- */
+.ns-day{margin:18px 0 4px;font-family:var(--ns-head);font-weight:700;font-size:22px;letter-spacing:.04em}
+.ns-day small{display:block;margin-top:2px;font-family:var(--ns-body);font-weight:500;font-size:12.5px;letter-spacing:0;color:var(--ns-mute)}
+.ns-title{margin:18px 0 8px}.ns-title h1{margin:0;font-family:var(--ns-head);font-size:24px;font-weight:700;letter-spacing:.05em}
+.ns-title p{margin:6px 0 0;color:var(--ns-mute);font-size:13px}
+.ns-h2{margin:0 0 10px;font-family:var(--ns-head);font-size:17px;font-weight:700;letter-spacing:.05em}
+.ns-sub{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:26px 0 8px}
+.ns-sub h2{margin:0;font-family:var(--ns-head);font-size:17px;font-weight:700;letter-spacing:.05em}
+.ns-sub small{color:var(--ns-faint);font-size:12px}
+.ns-note{color:var(--ns-mute);font-size:12.5px;line-height:1.8;margin:6px 0}
+.ns-empty{padding:26px 16px;text-align:center;color:var(--ns-mute);border:1px dashed var(--ns-line-2);border-radius:12px;font-size:14px}
+.ns-err{padding:14px;border-radius:12px;border:1px solid #5A3A3A;color:#F3C4BC;background:#1A1012;font-size:14px}
+
+/* ---------- 発走表（見せ場） ---------- */
+.ns-board{position:relative;margin:12px 0 0;padding:12px 12px 8px;border-radius:16px;background:linear-gradient(180deg,#0E1A2E,#0A1322);border:1px solid var(--ns-line)}
+.ns-lanes{position:relative;margin-left:42px}
+.ns-lane{position:relative;height:30px;border-bottom:1px solid rgba(42,62,92,.5)}
+.ns-lane:last-of-type{border-bottom:0}
+.ns-lane-name{position:absolute;left:-42px;top:50%;transform:translateY(-50%);width:38px;font-family:var(--ns-head);font-weight:700;font-size:13px;color:var(--ns-ink);letter-spacing:.04em}
+.ns-lane::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;border-radius:2px;background:linear-gradient(90deg,#3B2F1E,#5E4A2C)}
+.ns-pt{position:absolute;top:50%;width:12px;height:12px;min-height:12px;margin:-6px 0 0 -6px;padding:0;border-radius:50%;border:2px solid var(--ns-sand);background:var(--ns-night);cursor:pointer}
+.ns-pt::after{content:"";position:absolute;inset:-10px}
+.ns-pt.done{border-color:var(--ns-sand-lo);background:var(--ns-sand-lo)}
+.ns-pt.full{border-color:var(--ns-sand);background:var(--ns-sand)}
+.ns-pt.off{border-color:var(--ns-line-2);background:transparent;opacity:.55}
+.ns-pt.next{border-color:var(--ns-sand-hi);background:var(--ns-sand-hi);box-shadow:0 0 0 4px rgba(240,212,154,.18),0 0 18px rgba(240,212,154,.55)}
+@media (prefers-reduced-motion:no-preference){.ns-pt.next{animation:ns-glow 2.4s ease-in-out infinite}}
+@keyframes ns-glow{50%{box-shadow:0 0 0 7px rgba(240,212,154,.08),0 0 26px rgba(240,212,154,.7)}}
+.ns-now{position:absolute;top:-4px;bottom:-2px;width:0;border-left:1.5px solid #FFF6DF;pointer-events:none}
+.ns-now::before{content:"";position:absolute;top:-3px;left:-4.5px;width:7px;height:7px;border-radius:50%;background:#FFF6DF;box-shadow:0 0 10px #FFF6DF}
+.ns-ticks{position:relative;height:18px;margin-left:42px}
+.ns-ticks span{position:absolute;top:2px;transform:translateX(-50%);font-family:var(--ns-num);font-size:11.5px;color:var(--ns-faint)}
+.ns-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0;font-size:11px;color:var(--ns-faint)}
+.ns-legend i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%;border:1.5px solid var(--ns-sand);vertical-align:0}
+.ns-legend i.full{background:var(--ns-sand)}.ns-legend i.done{background:var(--ns-sand-lo);border-color:var(--ns-sand-lo)}
+
+/* ---------- 次の発走 ---------- */
+.ns-next{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:end;margin:12px 0 0;padding:16px;border-radius:16px;border:1px solid var(--ns-line-2);background:var(--ns-panel);color:inherit;text-align:left;width:100%}
+.ns-next .k{grid-column:1/-1;font-size:12px;color:var(--ns-sand);font-weight:700}
+.ns-next .v{font-family:var(--ns-head);font-size:27px;font-weight:800;line-height:1.2;letter-spacing:.04em}
+.ns-next .n{grid-column:1;font-size:13px;color:var(--ns-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns-next .c{grid-row:2/4;grid-column:2;text-align:right}
+.ns-next .c b{display:block;font-family:var(--ns-num);font-size:42px;font-weight:600;line-height:1;color:var(--ns-sand-hi);font-variant-numeric:tabular-nums}
+.ns-next .c small{font-size:11.5px;color:var(--ns-mute)}
+.ns-next .l{grid-column:1/-1;margin-top:8px}
+
+/* ---------- 取得ランプ 15/10/5/4/3 ---------- */
+.ns-lamps{display:inline-flex;gap:3px;vertical-align:middle}
+.ns-lamps i{display:inline-grid;place-items:center;min-width:22px;height:18px;padding:0 3px;border-radius:4px;border:1px solid var(--ns-line-2);font-style:normal;font-family:var(--ns-num);font-size:11.5px;color:var(--ns-faint);line-height:1}
+.ns-lamps i.ok{border-color:var(--ns-sand);background:var(--ns-sand);color:#1E1608;font-weight:600}
+.ns-lamps i.miss{border-color:#6B3C38;color:var(--ns-miss);text-decoration:line-through}
+.ns-lamps i.open{border-color:var(--ns-sand-hi);color:var(--ns-sand-hi)}
+.ns-lamps.lg i{min-width:34px;height:24px;font-size:13px}
+
+/* ---------- 競馬場タブ ---------- */
+.ns-seg{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:22px 0 4px;padding:4px;border-radius:999px;background:var(--ns-panel);border:1px solid var(--ns-line)}
+.ns-seg::-webkit-scrollbar{display:none}
+.ns-seg button{flex:1 0 auto;min-height:38px;padding:7px 14px;border:0;border-radius:999px;background:none;color:var(--ns-mute);font-family:var(--ns-head);font-size:15px;font-weight:700;letter-spacing:.1em}
+.ns-seg button small{margin-left:4px;font-family:var(--ns-num);font-size:12px;letter-spacing:0;color:var(--ns-faint)}
+.ns-seg button[aria-pressed="true"]{background:var(--ns-raise);color:var(--ns-ink);box-shadow:inset 0 0 0 1px var(--ns-line-2)}
+.ns-seg button[aria-pressed="true"] small{color:var(--ns-sand)}
+
+/* ---------- レース行 ---------- */
+.ns-races{display:flex;flex-direction:column}
+.ns-race{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;min-height:64px;padding:12px 2px;border:0;border-bottom:1px solid var(--ns-line);border-radius:0;background:none;color:inherit;text-align:left;font-weight:400}
+.ns-race:active{background:var(--ns-panel)}
+.ns-race .t{display:flex;flex-direction:column;line-height:1.1}
+.ns-race .t b{font-family:var(--ns-num);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums}
+.ns-race .t small{margin-top:3px;font-size:12px;font-weight:700;color:var(--ns-sand)}
+.ns-race .m{min-width:0}
+.ns-race .m b{display:block;font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns-race .m span{display:block;font-size:11.5px;color:var(--ns-faint)}
+.ns-race .p{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:5px;font-size:11.5px;color:var(--ns-faint)}
+.ns-race .p em{font-style:normal;display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 4px;border-radius:5px;background:var(--ns-raise);font-family:var(--ns-num);font-size:13.5px;color:var(--ns-ink)}
+.ns-race .p em.hit{background:var(--ns-sand);color:#1E1608;font-weight:600}
+.ns-race .s{text-align:right;font-size:11.5px;color:var(--ns-mute);line-height:1.5}
+.ns-race .s b{display:block;font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink);font-variant-numeric:tabular-nums}
+.ns-race .s b.soon{color:var(--ns-sand-hi)}
+.ns-race.off{opacity:.5}
+.ns-done{margin-top:6px}
+.ns-done summary{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:8px 2px;cursor:pointer;list-style:none;color:var(--ns-mute);font-size:13.5px;border-bottom:1px solid var(--ns-line)}
+.ns-done summary::-webkit-details-marker{display:none}
+.ns-done summary::after{content:"＋";color:var(--ns-sand)}
+.ns-done[open] summary::after{content:"－"}
+
+/* ---------- 過去 ---------- */
+.ns-days{display:flex;flex-direction:column}
+.ns-dayrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;min-height:60px;padding:12px 2px;border-bottom:1px solid var(--ns-line);color:inherit;text-decoration:none}
+.ns-dayrow b{font-family:var(--ns-head);font-size:16px;font-weight:700;letter-spacing:.04em}
+.ns-dayrow span{grid-column:1;font-size:12px;color:var(--ns-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ns-dayrow em{grid-row:1/3;grid-column:2;font-style:normal;font-family:var(--ns-num);font-size:15px;color:var(--ns-sand)}
+
+/* ---------- 成績・その他 ---------- */
+.ns-page{display:block}
+.ns-block{margin:14px 0 0;padding:16px;border-radius:16px;background:var(--ns-panel);border:1px solid var(--ns-line)}
+.ns-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ns-stat{padding:12px;border-radius:12px;background:var(--ns-raise)}
+.ns-stat span{display:block;font-size:12px;color:var(--ns-mute)}
+.ns-stat b{display:block;font-family:var(--ns-num);font-size:28px;font-weight:600;line-height:1.15;color:var(--ns-sand-hi)}
+.ns-stat small{display:block;font-size:11.5px;color:var(--ns-faint)}
+.ns-stat.base b{color:var(--ns-ink)}
+.ns-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.ns-tbl th{padding:6px 4px;font-size:11.5px;font-weight:500;color:var(--ns-mute);text-align:right;border-bottom:1px solid var(--ns-line-2)}
+.ns-tbl th:first-child,.ns-tbl td:first-child{text-align:left}
+.ns-tbl td{padding:9px 4px;text-align:right;border-bottom:1px solid var(--ns-line);font-variant-numeric:tabular-nums}
+.ns-tbl td b{font-family:var(--ns-num);font-size:17px;font-weight:600}
+.ns-tbl td small{display:block;font-size:10.5px;color:var(--ns-faint)}
+.ns-tbl .up{color:var(--ns-ok)}.ns-tbl .down{color:var(--ns-miss)}
+.ns-health dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:13.5px}
+.ns-health dt{color:var(--ns-mute)}.ns-health dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.ns-health .ok{color:var(--ns-ok)}.ns-health .ng{color:var(--ns-miss)}
+.ns-form{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:8px 0 12px}
+.ns-form label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--ns-mute)}
+.ns-form input,.ns-form select{width:100%;min-height:46px;padding:10px 12px;border-radius:10px;border:1px solid var(--ns-line-2);background:var(--ns-night);color:var(--ns-ink);font-size:16px}
+.ns-primary{width:100%;min-height:50px;border:0;border-radius:12px;background:var(--ns-sand);color:#1E1608;font-weight:800;font-size:15px;letter-spacing:.06em}
+.ns-ghost{min-height:40px;padding:8px 14px;border-radius:999px;border:1px solid #5A3A37;background:transparent;color:var(--ns-miss);font-size:13px}
+
+/* ---------- レース画面（既存の詳細） ---------- */
+.ns-race-bar{position:sticky;top:59px;z-index:25;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 -16px;padding:8px 16px;background:color-mix(in srgb,var(--ns-night) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--ns-line)}
+.ns-race-bar a{display:inline-flex;align-items:center;min-height:40px;color:var(--ns-sand-hi);text-decoration:none;font-weight:700;font-size:14px}
+#detail{margin-top:12px}
+#detail .panel,#detail .raceConsole{background:var(--ns-panel)!important;border-color:var(--ns-line)!important;box-shadow:none!important}
+#detail h2{font-family:var(--ns-head);letter-spacing:.04em}
+#detail .raceIdentity b,#detail .raceText b{font-family:var(--ns-head)}
+#detail .countBox b{font-family:var(--ns-num);color:var(--ns-sand-hi)}
+
+/* ---------- 下部ナビ ---------- */
+.ns-nav{position:fixed;left:0;right:0;bottom:0;z-index:40;background:color-mix(in srgb,var(--ns-panel) 94%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--ns-line);padding-bottom:var(--ns-safe-b)}
+.ns-nav-in{display:grid;grid-template-columns:repeat(4,1fr);max-width:640px;margin:0 auto}
+.ns-nav a{display:flex;flex-direction:column;align-items:center;gap:2px;min-height:56px;padding:8px 0 6px;color:var(--ns-faint);text-decoration:none;font-size:11px;font-weight:700}
+.ns-nav a svg{width:22px;height:22px}
+.ns-nav a[aria-current="page"]{color:var(--ns-sand-hi)}
+.ns-skel{height:120px;margin:16px 0;border-radius:16px;background:linear-gradient(90deg,var(--ns-panel),var(--ns-raise),var(--ns-panel));background-size:200% 100%}
+@media (prefers-reduced-motion:no-preference){.ns-skel{animation:ns-sk 1.4s linear infinite}}
+@keyframes ns-sk{to{background-position:-200% 0}}
+@media (min-width:700px){.ns-stats{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* ---------- レース画面：読みやすさと色の統一（既存部品の上書き） ---------- */
+#detail{--mono:"Barlow Condensed","Zen Kaku Gothic New","Hiragino Sans",sans-serif;--cyan:#8FC3E8;--blue:#8FB4E0}
+#detail h2{font-size:19px;font-weight:700;letter-spacing:.05em;text-transform:none}
+#detail .sectionKicker,#detail .muted{font-size:12px;color:var(--ns-mute)}
+#detail .phaseRail:before{background:linear-gradient(90deg,var(--ns-line-2),var(--ns-sand-lo) 70%,var(--ns-sand))}
+#detail .phaseNode span{font-size:11px;color:var(--ns-mute)}
+#detail .phaseNode b{font-size:11px}
+#detail .phaseNode small{font-size:10px;color:var(--ns-faint)}
+#detail .phaseNode.done .phaseDot{border-color:var(--ns-sand-lo);background:#2A2213;color:var(--ns-ink);box-shadow:none}
+#detail .phaseNode.done b{color:var(--ns-sand)}
+#detail .phaseNode.active .phaseDot{border-color:var(--ns-sand-hi);background:#3A2E14;color:#FFF6DF;box-shadow:0 0 16px rgba(240,212,154,.35)}
+#detail .phaseNode.active b{color:var(--ns-sand-hi)}
+#detail .snap{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .snap span{font-size:11px;color:var(--ns-mute)}
+#detail .snap b{font-size:12px;font-weight:600}
+#detail .snap.ok{border-color:var(--ns-sand);background:#211A0E}
+#detail .snap.ok b{color:var(--ns-sand-hi)}
+#detail .stageStatusItem{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .stageStatusItem span{font-size:10.5px;letter-spacing:.06em;color:var(--ns-faint)}
+#detail .stageStatusItem small{font-size:10.5px;color:var(--ns-mute)}
+#detail .stageStatusItem.done{border-color:var(--ns-sand-lo);background:#1A150C}
+#detail .raceSignal{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .raceSignal span{font-size:11px;letter-spacing:.04em}
+#detail .raceSignal small{font-size:11.5px}
+#detail .guardBar{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .guardBar small{font-size:11.5px}
+#detail .phasePill{background:var(--ns-night);border-color:var(--ns-line-2);font-size:12px}
+#detail .countBox span{font-size:11px;color:var(--ns-mute)}
+#detail details>summary{min-height:44px;display:flex;align-items:center;font-size:14px;color:var(--ns-mute)}
+</style>
 </head>
 
 <body>
 <div class="app">
-  <header class="topbar">
-    <div class="brandLock"><div class="brandMark"><img src="data:image/webp;base64,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" alt="馬とスコープのODDS SCOPEロゴ"></div><div class="brandText"><h1>ODDS SCOPE</h1><small>NAR MODE</small></div></div>
-    <div class="versionBox"><b>Ver.13.3 · CINEMATIC RACE FLOW</b><span>MARKET INTELLIGENCE × CLEAR FLOW × RESULT GUARD</span></div>
-    <div class="clockBox"><div id="todayLabel" class="date">—</div><div><span id="clockLabel" class="time">--:--:--</span><span class="live">LIVE</span></div></div>
-      <button type="button" class="headerRefresh" id="headerRefresh" onclick="refreshHeaderData()" aria-label="最新データに更新" title="データを再取得">↻ 更新</button>
+  <header class="ns-top">
+    <a class="ns-logo" href="#/" aria-label="今日のレースへ"><img src="/apple-touch-icon.png?v=20261013b" alt=""><b>ODDS SCOPE<span>地方</span></b></a>
+    <span class="ns-clock" id="clockLabel" aria-label="現在時刻">--:--:--</span>
+    <button type="button" class="ns-icon" id="headerRefresh" onclick="refreshHeaderData()" aria-label="最新の状態に更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </header>
-  <section class="panel pad" id="learningPanel" style="margin-top:12px;border:1px solid #365a70">
-    <div class="head"><h2>学習状況・予想精度</h2><span class="badge">自動更新</span></div>
-    <div id="learn" class="muted" aria-live="polite">学習データを取得中…</div>
-    <div id="roi" aria-live="polite"></div>
+  <span id="todayLabel" hidden></span>
+  <main id="nsView" class="ns-view" aria-live="polite"></main>
+
+  <section id="nsRecord" class="ns-page" hidden>
+    <div class="ns-title"><h1>成績</h1><p>FINAL上位3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
+    <div id="learn" class="ns-block">集計を読み込んでいます</div>
+    <div id="roi"></div>
   </section>
-  <section class="panel pad">
-    <div class="head"><h2>レース予約</h2><span class="badge">発走3分前まで予約可</span></div>
-    <div class="reserveGrid">
-      <input id="d" type="date" aria-label="日付">
-      <select id="b" aria-label="競馬場"><option value="3">帯広</option><option value="10">盛岡</option><option value="11">水沢</option><option value="18">浦和</option><option value="19">船橋</option><option value="20">大井</option><option value="21">川崎</option><option value="22">金沢</option><option value="23">笠松</option><option value="24">名古屋</option><option value="27">園田</option><option value="28">姫路</option><option value="31">高知</option><option value="36">門別</option><option value="55">佐賀</option></select>
-      <select id="r" aria-label="レース"></select><input id="t" type="time" aria-label="発走時刻"><button id="go" class="reserveBtn">予約する</button>
-    </div>
-    <div id="msg" class="helper">10分前CANDIDATE → 5分前SHORTLIST → 4分前LATE UPDATE → 3分前FINAL。市場を主軸に、展開は補助フィルター、結果は継続校正に使います。</div>
+
+  <section id="nsMore" class="ns-page" hidden>
+    <div class="ns-title"><h1>その他</h1></div>
+    <section class="ns-block">
+      <h2 class="ns-h2">取得の状態</h2>
+      <div id="nsHealth" class="ns-health">確認しています</div>
+    </section>
+    <section class="ns-block">
+      <h2 class="ns-h2">手動で予約</h2>
+      <p class="ns-note">開催中の全レースは自動で予約されます。一覧にないレースだけ、ここから追加してください。</p>
+      <div class="ns-form">
+        <label>日付<input id="d" type="date"></label>
+        <label>競馬場<select id="b" aria-label="競馬場"><option value="3">帯広</option><option value="36">門別</option><option value="10">盛岡</option><option value="11">水沢</option><option value="18">浦和</option><option value="19">船橋</option><option value="20">大井</option><option value="21">川崎</option><option value="22">金沢</option><option value="23">笠松</option><option value="24">名古屋</option><option value="27">園田</option><option value="28">姫路</option><option value="31">高知</option><option value="55">佐賀</option></select></label>
+        <label>レース<select id="r" aria-label="レース"></select></label>
+        <label>発走時刻<input id="t" type="time" aria-label="発走時刻"></label>
+      </div>
+      <button id="go" class="ns-primary" type="button">予約する</button>
+      <div id="msg" class="ns-note" aria-live="polite"></div>
+    </section>
+    <section class="ns-block">
+      <h2 class="ns-h2">ホーム画面に追加</h2>
+      <p class="ns-note">Safariの共有ボタン（□に↑）から「ホーム画面に追加」を選ぶと、アプリとして開けます。追加済みの場合は、開き直すだけで新しい画面になります。</p>
+    </section>
   </section>
-  <section class="panel pad">
-    <div class="head"><h2>RACE QUEUE</h2><span class="badge">15 / 10 / 5 / 4 / 3 MIN</span></div>
-    <div id="list" class="queue"><span class="muted">読み込み中…</span></div>
-  </section>
+
+  <nav class="ns-race-bar" id="nsRaceBar" hidden><a id="nsBack" href="#/">‹ 一覧に戻る</a><button type="button" class="ns-ghost" id="nsCancel">このレースの記録をやめる</button></nav>
   <div id="detail" class="detail">
     <section class="raceConsole">
       <div class="raceConsoleTop">
@@ -334,7 +555,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
       </div>
     </section>
     <section class="panel pad signalPanel">
-      <div class="sectionTitle"><div><h2>TOP SIGNALS</h2><div class="sectionKicker">今、見るべき馬を段階的に絞り込み</div></div><small id="phaseLabel" class="phasePill">10分前 CANDIDATE待ち</small></div>
+      <div class="sectionTitle"><div><h2>注目馬</h2><div class="sectionKicker">今、見るべき馬を段階的に絞り込み</div></div><small id="phaseLabel" class="phasePill">10分前 CANDIDATE待ち</small></div>
       <div id="confidence" class="muted" style="margin:-3px 0 8px">データ信頼度 —</div>
       <div id="raceSignal" class="raceSignal grade-d"><div><span>SIGNAL LEVEL</span><b>LOW SIGNAL</b><small>10分前CANDIDATE待ち</small></div><div class="signalScale"><span class="gs">S PRIME</span><span class="ga">A STRONG</span><span class="gb">B SELECT</span><span class="gc">C WATCH</span><span class="gd">D LOW</span></div></div>
       <div id="guardBar" class="guardBar"><b>RESULT GUARD</b><small id="guardNote">30レースまでは収集中。単発の外れでロジックを追いかけません。</small><span id="guardState" class="guardState COLLECTING">COLLECTING</span></div>
@@ -343,7 +564,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
       <div class="dnaRibbon"><div><b>GAP</b><span>断層</span></div><div><b>ISOLATION</b><span>ポツン</span></div><div><b>FLOAT</b><span>浮き</span></div><div><b>CROSS</b><span>市場一致</span></div><div><b>POTUN</b><span>組合せ孤立</span></div><div><b>ACCEL</b><span>直前加速</span></div></div>
     </section>
     <section class="panel pad flowPanel">
-      <div class="flowHead"><div><h2>RACE FLOW / 3D</h2><div class="sectionKicker">近走コーナー通過位置・脚質・枠から構成する、奥行きのある競走シーン。想定隊列を可視化します。</div></div><div id="flowMeta" class="flowMeta"><span class="flowPill">DATA WAIT</span></div></div>
+      <div class="flowHead"><div><h2>展開（3D）</h2><div class="sectionKicker">近走コーナー通過位置・脚質・枠から構成する、奥行きのある競走シーン。想定隊列を可視化します。</div></div><div id="flowMeta" class="flowMeta"><span class="flowPill">DATA WAIT</span></div></div>
       <div class="flowStage">
         <div class="flowControls"><button id="flowPlay" class="primary" type="button">▶ 予想レース再生</button><button id="flowReset" type="button">↺ START</button><button id="flowSpeed" type="button" aria-label="再生速度">1×</button><span class="flowTruth">予想アニメーション / 実位置ではありません</span><span id="flowPhase" class="flowPhase">START</span></div>
         <div id="flowFinish" class="flowFinish"><div class="flowFinishLabel"><b>展開上の前方候補</b><span>予測・実結果ではありません</span></div><div class="flowFinishPodium"><div>1着 <b>—</b></div><div>2着 <b>—</b></div><div>3着 <b>—</b></div></div></div>
@@ -354,16 +575,22 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
       </div>
     </section>
     <section class="panel rankPanel">
-      <div class="head pad" style="padding-bottom:9px"><h2 id="rankingTitle">SCOPE RANKING</h2><div class="rankTools"><button class="rankTool active" data-rank="scope">FINAL順</button><button class="rankTool" data-rank="pop">人気順</button><button class="rankTool" data-rank="dna">DNA順</button><button class="rankTool" data-rank="potun">POTUN順</button><button class="rankTool" data-rank="accel">ACCEL順</button><button class="rankTool" data-rank="raceflow">展開順</button></div></div>
+      <div class="head pad" style="padding-bottom:9px"><h2 id="rankingTitle">全頭ランキング</h2><div class="rankTools"><button class="rankTool active" data-rank="scope">FINAL順</button><button class="rankTool" data-rank="pop">人気順</button><button class="rankTool" data-rank="dna">DNA順</button><button class="rankTool" data-rank="potun">POTUN順</button><button class="rankTool" data-rank="accel">ACCEL順</button><button class="rankTool" data-rank="raceflow">展開順</button></div></div>
       <div class="rankWrap"><div id="rankHead" class="rankHead"><span>順位</span><span>馬 / 人気 / 騎手</span><span>単勝</span><span>DNA</span><span>GAP</span><span>POTUN</span><span>ACCEL</span><span>SCOPE</span><span>判定</span></div><div id="ranking"><div class="pad muted">10分前CANDIDATE待ち</div></div></div>
     </section>
-    <section class="panel pad"><div class="head"><h2>SELECTED HORSE / DEEP VIEW</h2><span id="updated" class="badge"></span></div><div id="horseDetail" class="muted">ランキングから馬を選択してください。</div></section>
-    <details><summary>MARKET TAPE / DATA STATUS</summary><div><div class="tape">
+    <section class="panel pad"><div class="head"><h2>選んだ馬の詳細</h2><span id="updated" class="badge"></span></div><div id="horseDetail" class="muted">ランキングから馬を選択してください。</div></section>
+    <details><summary>取得したオッズの記録</summary><div><div class="tape">
       <div class="slot"><span>15分前</span><b id="s15">未取得</b><em id="t15">—</em></div><div class="slot"><span>10分前</span><b id="s10">未取得</b><em id="t10">—</em></div><div class="slot"><span>5分前</span><b id="s5">未取得</b><em id="t5">—</em></div><div class="slot"><span>4分前</span><b id="s4">未取得</b><em id="t4">—</em></div><div class="slot"><span>3分前</span><b id="s3">未取得</b><em id="t3">—</em></div>
     </div><div id="marketCount" class="marketCount"></div></div></details>
     <details><summary>詳細検証・結果データ</summary><div><div id="result" class="muted">未取得</div></div></details>
   </div>
 </div>
+<nav class="ns-nav" aria-label="メニュー"><div class="ns-nav-in">
+  <a href="#/" data-page="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>今日</a>
+  <a href="#/past" data-page="past"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></svg>過去</a>
+  <a href="#/record" data-page="record"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>成績</a>
+  <a href="#/more" data-page="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg>その他</a>
+</div></nav>
 
 <script>
 const $=x=>document.getElementById(x);$('d').value=new Date().toLocaleDateString('sv-SE');for(let i=1;i<=12;i++)$('r').innerHTML+=`<option value="${i}">${i}R</option>`;
@@ -559,27 +786,6 @@ function ring(label,v,c){let vv=v==null?0:Math.max(0,Math.min(100,Number(v)));re
 function barRow(label,v){return `<div class="barrow"><span>${label}</span><div class="track"><i style="width:${v==null?0:Math.max(0,Math.min(100,Number(v)))}%"></i></div><b>${num(v)}</b></div>`}
 function dnaBox(label,v,desc){return `<div class="dnaBox ${(v||0)>=70?'hot':''}"><span>${label}</span><b>${num(v)}</b><span>${desc}</span></div>`}
 function renderHorse(x){if(!x){$('horseDetail').innerHTML='<span class="muted">ランキングから馬を選択してください。</span>';return}let rec=x.jockey_has_data&&x.jockey_record?.length===4?x.jockey_record.join('-'):'—',finishes=x.recent_finishes?.length?x.recent_finishes.join('・'):'—',phase=last?.signal_phase||'WAIT',score=x.adaptive_score??x.scope_score,accelDesc=phase==='CANDIDATE'?'15→10分の初動':phase==='SHORTLIST'?'10→5分を含む加速':phase==='LATE UPDATE'?'5→4分の急変':(x.late_4m_ready?'5→4→3分の加速':'4分欠損・5→3で暫定');$('horseDetail').innerHTML=`<div class="horseConsoleGrid"><div class="subcard"><div class="subhead"><b>選択馬の詳細</b><small>${esc(phase)}</small></div><div class="selTop">${waku(x.frame,x.horse,true)}<div class="selName"><b>${esc(x.name||'')}</b><small>${x.pop}人気 · ${esc(x.jockey||'騎手—')} · ${esc(x.style||'脚質—')}</small></div><div class="bigScope">${num(score)}</div></div><div class="rings">${ring('SCOPE',score,'#f1c95d')}${ring('DNA',x.dna_score,'#b996ff')}${ring('EDGE',x.edge_score,'#55d99a')}${ring('FLOW',x.flow_score,'#3bd6d0')}${ring('RACE FLOW',x.race_flow_score,'#7bc8ff')}</div><div class="whyBox"><b>評価理由</b><div>・${esc(topReason(x))}<br>・${flowText(x).replace(/<[^>]+>/g,'')}<br>・近走 ${esc(finishes)} / 騎手×馬 ${esc(rec)}</div></div><div class="metaGrid"><div class="metaBox"><span>基礎SCOPE</span><b>${num(x.scope_score)}</b></div><div class="metaBox"><span>学習シグナル</span><b>${x.model_signal==null?'—':num(x.model_signal)}</b></div><div class="metaBox"><span>学習反映</span><b>${num(x.model_weight)}%</b></div><div class="metaBox"><span>データ充足</span><b>${num(x.data_confidence)}%</b></div></div></div><div class="subcard"><div class="subhead"><b>ODDS DNA</b><small>70↑ 強い違和感</small></div><div class="dnaBars">${barRow('GAP / 断層',x.gap_score)}${barRow('ISOLATION',x.isolation_score)}${barRow('FLOAT / 浮き',x.float_score)}${barRow('CROSS',x.cross_score)}${barRow('POTUN',x.potun_score)}${barRow('ACCEL',x.accel_score)}</div><div class="note" style="margin-top:9px">ACCEL：${esc(accelDesc)}。市場の異常構造と直前加速を同時に見ます。</div><div class="abilityBars" style="margin-top:9px">${barRow('近走',x.form_score)}${barRow('距離',x.distance_score)}${barRow('コース',x.course_score)}${barRow('騎手',x.jockey_score)}${barRow('展開適合',x.race_flow_score??x.pace_score)}${barRow('状態',x.condition_score)}</div></div><div class="subcard"><div class="subhead"><b>MARKET TAPE</b><small>単勝 15→10→5→4→3</small></div>${sparkSvg(x)}<div class="chartMeta">${[['15',x.odds15],['10',x.odds10],['5',x.odds5],['4',x.odds4],['3',x.odds3]].map(z=>`<div><span>${z[0]}分前</span><b>${dec(z[1])}</b></div>`).join('')}</div><div class="metaGrid"><div class="metaBox"><span>現在フェーズ</span><b>${esc(phase)}</b></div><div class="metaBox"><span>SIGNAL LEVEL</span><b>${esc(gradeMeta(x).code+' '+gradeMeta(x).label)} / ${num(x.signal_index)}</b></div></div><div class="note" style="margin-top:9px">候補は10分前から表示し、5分・4分・3分のオッズ変化で段階的に入れ替えます。3分前FINALで学習モデルを安全条件付きで反映します。</div></div></div>`}
-let queueOpenDates=new Set(),queueDatesInitialized=false,queueLimit=60,queueHasMore=false,queueLoadingMore=false;
-// Past races are never hidden: the list is paged (60 at a time) and "さらに過去のレースを表示" loads older ones.
-async function fetchRaces(total){let out=[],before=null,more=false;while(out.length<total){let n=Math.min(200,total-out.length);let u='/api/races?limit='+n+'&nocache='+Date.now()+(before?'&before='+encodeURIComponent(before):'');let r=await fetch(u,{cache:'no-store'}),j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'HTTP '+r.status);out=out.concat(j.races||[]);more=!!j.has_more;if(!more||!j.next_before)break;before=j.next_before}return {races:out,more}}
-async function loadMoreRaces(btn){if(queueLoadingMore)return;queueLoadingMore=true;if(btn){btn.disabled=true;btn.textContent='読込中…'}const prev=queueLimit;queueLimit+=60;try{await load(true)}catch(e){queueLimit=prev}finally{queueLoadingMore=false}}
-async function load(strict=false){try{
- let j=await fetchRaces(queueLimit);queueHasMore=j.more;
- let a=(j.races||[]).filter(x=>x.date!=='2026-10-07'&&x.status!=='cancelled'),groups=new Map();
- for(const x of a){const d=String(x.date||'日付未設定');if(!groups.has(d))groups.set(d,[]);groups.get(d).push(x)}
- const dates=[...groups.keys()].sort((a,b)=>b.localeCompare(a,'ja'));
- if(!queueDatesInitialized&&dates.length){queueOpenDates.add(dates[0]);queueDatesInitialized=true}
- const list=$('list');
- list.innerHTML=dates.length?dates.map(d=>{
-  const rows=groups.get(d),opened=queueOpenDates.has(d);
-  const cards=rows.map(x=>`<article class="race"><div class="raceTop"><div><div class="raceTitle">${esc(x.baba_name)} ${x.race}R</div><div class="muted">${esc(x.date)}　${esc(x.start_iso.slice(11,16))}</div></div><span class="mode">${esc(x.status)}</span></div><div class="chips">${chip(15,x.current_slots||[])}${chip(10,x.current_slots||[])}${chip(5,x.current_slots||[])}${chip(4,x.current_slots||[])}${chip(3,x.current_slots||[])}</div><div class="raceBtns"><button data-act="show" data-key="${encodeURIComponent(x.race_key)}">詳細を見る</button><button class="cancel" data-act="cancel" data-key="${encodeURIComponent(x.race_key)}">取消</button></div></article>`).join('');
-  return `<details class="queueDay" data-date="${esc(d)}" ${opened?'open':''}><summary class="queueDayHeader"><span class="queueDayDate">${esc(d)}</span><span class="queueDayCount">${rows.length}レース</span><span class="queueDayArrow">⌄</span></summary><div class="queueDayRaces">${cards}</div></details>`
- }).join('')+(queueHasMore?'<button id="moreRaces" style="width:100%;margin-top:10px">さらに過去のレースを表示</button>':''):'<span class="muted">予約中のレースはありません</span>';
- list.querySelectorAll('details.queueDay').forEach(el=>el.addEventListener('toggle',()=>{
-  const d=el.dataset.date;if(el.open)queueOpenDates.add(d);else queueOpenDates.delete(d);
- }));
- const more=$('moreRaces');if(more)more.onclick=()=>loadMoreRaces(more);
-}catch(e){if(strict){alert('一覧取得失敗：'+e.message);throw e}$('list').innerHTML=`<span class="muted">一覧取得失敗：${esc(e.message)}</span>`}}
 async function refreshProfile(k){if(profileRefreshing)return;profileRefreshing=true;try{await fetch('/api/profile-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({race_key:k})});await show(k,true)}catch(e){}finally{profileRefreshing=false}}
 function renderPlaceValue(rows,phase,stored){
  const el=$('placeValueRows');if(!el)return;
@@ -593,7 +799,7 @@ function renderPlaceValue(rows,phase,stored){
 function renderStatus(j){
   last=j;
   let displaySnaps=j.display_snaps||j.snaps||{},slots=Object.keys(displaySnaps).map(Number),legacy=!!j.legacy?.active;
-  $('venueBadge').textContent=j.race.baba_name||'NAR';$('raceNoBadge').textContent=(j.race.race||'—')+'R';$('raceTitle').textContent=`${j.race.baba_name} ${j.race.race}R · MARKET ANALYSIS`;$('raceMeta').textContent=`${j.race.date} · 発走 ${j.race.start_iso.slice(11,16)} · ODDS DNA`;
+  $('venueBadge').textContent=j.race.baba_name||'NAR';$('raceNoBadge').textContent=(j.race.race||'—')+'R';$('raceTitle').textContent=`${j.race.baba_name} ${j.race.race}R`;$('raceMeta').textContent=`${j.race.date} · 発走 ${j.race.start_iso.slice(11,16)} · ODDS DNA`;
   [15,10,5,4,3].forEach(n=>{let el=$('a'+n),ok=slots.includes(n);el.classList.toggle('ok',ok);el.querySelector('b').textContent=ok?'取得済':'待機'});
   if(legacy){
     $('placeValueRows').innerHTML='<span class="muted">旧データは複勝妙味の評価対象外です。</span>';
@@ -617,27 +823,7 @@ function renderStatus(j){
   let latest=displaySnaps?.['3']||displaySnaps?.['4']||displaySnaps?.['5']||displaySnaps?.['10']||displaySnaps?.['15'];if(latest?.counts){let c=latest.counts;$('marketCount').textContent=`取得市場：単勝 ${c.win||0}頭 / 馬連 ${c.Q||0} / 馬単 ${c.E||0} / ワイド ${c.W||0} / 三連複 ${c.R||0} / 三連単 ${c.T||0}`}else $('marketCount').textContent='';
   $('detail').style.display='block';updateClock();if(!j.profile_ready)refreshProfile(j.race.race_key)
 }
-async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';if(!silent)$('detail').scrollIntoView({behavior:'smooth'});try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
-async function cancelR(k){
- if(!confirm('この予約を取り消しますか？'))return;
- const btn=[...document.querySelectorAll('[data-act="cancel"]')].find(b=>decodeURIComponent(b.dataset.key||'')===k);
- if(btn){btn.disabled=true;btn.textContent='取消中…'}
- try{
-  const r=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({race_key:k})});
-  const j=await r.json();
-  if(!r.ok||!j.ok||j.status!=='cancelled')throw new Error(j.error||'HTTP '+r.status);
-  // The server re-reads the row and confirms status='cancelled' before answering ok.
-  if(cur===k){cur=null;sessionStorage.removeItem('oddsScopeCur');$('detail').style.display='none'}
-  const card=btn&&btn.closest('article.race');if(card)card.remove();
-  await load();
-  $('msg').textContent='予約を取り消しました';
- }catch(e){
-  alert('予約取消に失敗しました：'+e.message);
-  $('msg').textContent='予約取消に失敗しました：'+e.message;
-  if(btn){btn.disabled=false;btn.textContent='取消'}
- }
-}
-
+async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
 document.addEventListener('click',e=>{let sort=e.target.closest('.rankTool');if(sort){rankMode=sort.dataset.rank||'scope';if(last&&!last.legacy?.active)renderRanking(last.rankings||[]);return}let b=e.target.closest('[data-act]');if(b){let k=decodeURIComponent(b.dataset.key||'');b.dataset.act==='show'?show(k):cancelR(k);return}let row=e.target.closest('.rrow[data-horse]');if(row&&last){selectedHorse=Number(row.dataset.horse);renderRanking(last.rankings||[]);renderHorse((last.rankings||[]).find(x=>x.horse===selectedHorse))}})
 $('flowPlay').addEventListener('click',playFlow);
 $('flowSeek').addEventListener('input',e=>{stopFlow();setFlowProgress(Number(e.target.value)/100)});
@@ -645,38 +831,192 @@ $('flowSpeed').addEventListener('click',()=>{const wasPlaying=flowPlaying;stopFl
 window.addEventListener('resize',()=>drawFlowScene(flowVisualTime));document.addEventListener('visibilitychange',()=>{if(document.hidden)stopFlow()});
 $('flowReset').addEventListener('click',()=>{stopFlow();flowProgress=0;setFlowProgress(0)});document.querySelectorAll('.flowPhaseBtn').forEach((b,i)=>b.addEventListener('click',()=>{stopFlow();setFlowProgress(i/3)}));
 $('go').onclick=async()=>{if(!$('t').value){$('msg').textContent='発走時刻を入力してください';return}let o=$('b').options[$('b').selectedIndex],iso=$('d').value+'T'+$('t').value+':00+09:00';$('msg').innerHTML='<span class="loading"><i class="dot"></i>予約中…</span>';try{let r=await fetch('/api/reserve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:$('d').value,baba:$('b').value,baba_name:o.text,race:+$('r').value,start_iso:iso})});let j=await r.json();if(j.ok){let lab={15:'15分前',10:'10分CANDIDATE',5:'5分SHORTLIST',4:'4分LATE',3:'3分FINAL'}[j.start_stage]||'次の取得時点';$('msg').textContent=`予約完了。残り約${j.minutes_left}分、${lab}から監視します。取得済みデータに応じて候補を段階更新します。`;void fetch('/api/tick',{method:'POST',cache:'no-store'}).catch(()=>{});load()}else{$('msg').textContent='予約失敗：'+(j.error||r.status)}}catch(e){$('msg').textContent='予約失敗：'+e.message}}
-function updateClock(){let now=new Date(),wd=['日','月','火','水','木','金','土'];if($('todayLabel'))$('todayLabel').textContent=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} (${wd[now.getDay()]})`;if($('clockLabel'))$('clockLabel').textContent=now.toLocaleTimeString('ja-JP',{hour12:false});if($('countdown')&&last?.race?.start_iso){let d=(new Date(last.race.start_iso)-now)/1000;if(d<=0){$('countdown').textContent='発走済'}else{let m=Math.floor(d/60),s=Math.floor(d%60);$('countdown').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}}}
+function updateClock(){let now=new Date(),wd=['日','月','火','水','木','金','土'];if($('todayLabel'))$('todayLabel').textContent=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} (${wd[now.getDay()]})`;if($('clockLabel'))$('clockLabel').textContent=now.toLocaleTimeString('ja-JP',{hour12:false,timeZone:'Asia/Tokyo'});if($('countdown')&&last?.race?.start_iso){let d=(new Date(last.race.start_iso)-now)/1000;if(d<=0){$('countdown').textContent='発走済'}else{let m=Math.floor(d/60),s=Math.floor(d%60);$('countdown').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}}}
+
+</script>
+<script id="ns-shell">
+// ===== ODDS SCOPE 地方：画面の枠（今日／過去／成績／その他／レース） =====
+// 一覧は /api/day（軽量）だけで描く。レース画面は既存の show()/renderStatus() をそのまま使う。
+const NS_WINDOWS={15:[13.75,15.72],10:[8.9,11.2],5:[4.6,6.2],4:[3.6,4.6],3:[1.85,3.6]};
+const NS_SLOTS=[15,10,5,4,3];
+const NS_VENUE_ORDER=['帯広','門別','盛岡','水沢','浦和','船橋','大井','川崎','金沢','笠松','名古屋','園田','姫路','高知','佐賀'];
+const NS_WD=['日','月','火','水','木','金','土'];
+const NS_MISS={SCHEDULER_NOT_RUNNING:'サーバー停止',RESERVED_AFTER_WINDOW:'予約が間に合わず',CANCELLED:'取消',NOT_SCHEDULED:'監視対象外',NOT_ATTEMPTED:'未実行',ERR:'取得エラー',SKIPPED_LATE:'時間切れ',INVALID_PAYLOAD:'旧形式'};
+const NS={route:'',date:null,races:[],venue:null,back:'#/',timers:[],loading:false};
+function nsStore(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
+function nsToday(){return new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})}
+function nsDayLabel(d){const [y,m,dd]=String(d).split('-').map(Number);return `${m}月${dd}日（${NS_WD[new Date(Date.UTC(y,m-1,dd)).getUTCDay()]}）`}
+function nsHM(iso){return String(iso||'').slice(11,16)}
+function nsMins(iso,now){return (new Date(iso)-now)/60000}
+function nsVenues(races){const v=[...new Set(races.filter(r=>r.status!=='cancelled').map(r=>r.baba_name))];return v.sort((a,b)=>((NS_VENUE_ORDER.indexOf(a)+99)%99)-((NS_VENUE_ORDER.indexOf(b)+99)%99))}
+function nsFinished(r,now){return r.status==='complete'||nsMins(r.start_iso,now)<-1}
+function nsLamp(r,slot,now){
+  if((r.slots||[]).includes(slot))return 'ok';
+  if(r.status==='cancelled')return '';
+  const m=nsMins(r.start_iso,now),[lo,hi]=NS_WINDOWS[slot];
+  return m<lo?'miss':m<=hi?'open':'';
+}
+function nsLamps(r,now,lg){return `<span class="ns-lamps${lg?' lg':''}" aria-label="オッズ取得 ${(r.slots||[]).length}/5">${NS_SLOTS.map(s=>`<i class="${nsLamp(r,s,now)}">${s}</i>`).join('')}</span>`}
+function nsNext(races,now){return races.filter(r=>r.status==='reserved'&&nsMins(r.start_iso,now)>0).sort((a,b)=>new Date(a.start_iso)-new Date(b.start_iso))[0]||null}
+function nsMMSS(sec){sec=Math.max(0,Math.round(sec));const m=Math.floor(sec/60);return m>=60?`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`}
+
+// 発走表：全場をレーンで並べ、発走点と今の時刻を1本の時間軸に置く
+function nsBoard(races,now,isToday){
+  const live=races.filter(r=>r.start_iso);if(!live.length)return '';
+  const ts=live.map(r=>new Date(r.start_iso).getTime()),t0=Math.min(...ts)-20*60000,t1=Math.max(...ts)+10*60000;
+  const X=t=>((t-t0)/(t1-t0)*100).toFixed(2)+'%';
+  const next=isToday?nsNext(races,now):null,venues=nsVenues(races);
+  const ticks=[];for(let t=Math.floor(t0/3600000)*3600000+3600000;t<t1;t+=3600000){const hr=(new Date(t).getUTCHours()+9)%24;if(hr%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${hr}時</span>`)}
+  const lanes=venues.map(v=>`<div class="ns-lane"><span class="ns-lane-name">${esc(v)}</span>${races.filter(r=>r.baba_name===v).map(r=>{
+    const t=new Date(r.start_iso).getTime(),done=nsFinished(r,now);
+    const cls=r.status==='cancelled'?'off':next&&r.race_key===next.race_key?'next':done?((r.slots||[]).length===5?'full':'done'):'';
+    return `<button class="ns-pt ${cls}" style="left:${X(t)}" data-race="${esc(r.race_key)}" aria-label="${esc(v)}${r.race}R ${nsHM(r.start_iso)}${r.status==='cancelled'?' 取消':''}"></button>`}).join('')}</div>`).join('');
+  const nowLine=isToday&&now.getTime()>t0&&now.getTime()<t1?`<i class="ns-now" style="left:${X(now.getTime())}"></i>`:'';
+  return `<section class="ns-board" aria-label="発走表"><div class="ns-lanes">${lanes}${nowLine}</div><div class="ns-ticks">${ticks.join('')}</div>
+  <div class="ns-legend"><span><i class="full"></i>5時点すべて取得</span><span><i class="done"></i>一部取得</span><span><i></i>これから</span></div></section>`;
+}
+function nsNextCard(r,now){
+  if(!r)return '';
+  const sec=(new Date(r.start_iso)-now)/1000;
+  return `<button class="ns-next" data-race="${esc(r.race_key)}"><span class="k">次の発走</span><span class="v">${esc(r.baba_name)} ${r.race}R</span>
+  <span class="c"><b id="nsCount">${nsMMSS(sec)}</b><small>${nsHM(r.start_iso)}発走まで</small></span>
+  <span class="n">${esc(r.race_name||'')}${r.course?'　'+esc(r.course):''}</span><span class="l">${nsLamps(r,now,true)}</span></button>`;
+}
+function nsRow(r,now,isToday){
+  const m=nsMins(r.start_iso,now),res=r.result,top=new Set(res?(res.order||[]).filter((h,i)=>(res.places||[])[i]<=3):[]);
+  const picks=(r.picks||[]).length?`<span class="p">FINAL ${r.picks.map(h=>`<em class="${top.has(h)?'hit':''}">${h}</em>`).join('')}</span>`:'';
+  let state;
+  if(r.status==='cancelled')state='<b>—</b>取消';
+  else if(res)state=`<b>${(res.order||[]).slice(0,3).join('-')}</b>結果`;
+  else if(isToday&&m>0)state=`<b class="${m<=16?'soon':''}">${m<60?Math.ceil(m)+'分':nsHM(r.start_iso)}</b>${m<60?'発走まで':''}`;
+  else state=m>-15?'<b>発走</b>結果待ち':'<b>—</b>結果待ち';
+  const sub=[r.course,r.field_size?r.field_size+'頭':''].filter(Boolean).join('　');
+  return `<button class="ns-race${r.status==='cancelled'?' off':''}" data-race="${esc(r.race_key)}"><span class="t"><b>${nsHM(r.start_iso)}</b><small>${r.race}R</small></span>
+  <span class="m"><b>${esc(r.race_name||r.race+'R')}</b>${sub?`<span>${esc(sub)}</span>`:''}<span class="p">${nsLamps(r,now)}</span>${picks}</span><span class="s">${state}</span></button>`;
+}
+function nsDayHTML(date,races,now){
+  const isToday=date===nsToday(),venues=nsVenues(races);
+  if(!races.length)return `<h1 class="ns-day">${nsDayLabel(date)}<small>この日のレースはまだありません</small></h1><div class="ns-empty">開催日は公式の出走表から全レースを自動で予約します。開催がない日は、過去の開催を「過去」から見られます。</div>`;
+  let v=NS.venue&&venues.includes(NS.venue)?NS.venue:null;
+  if(!v){const nx=isToday?nsNext(races,now):null;v=nx?nx.baba_name:venues[0]}
+  NS.venue=v;
+  const mine=races.filter(r=>r.baba_name===v).sort((a,b)=>a.race-b.race);
+  const open=isToday?mine.filter(r=>!nsFinished(r,now)):[],done=isToday?mine.filter(r=>nsFinished(r,now)):mine;
+  const n=races.filter(r=>r.status!=='cancelled').length;
+  return `<h1 class="ns-day">${nsDayLabel(date)}<small>${esc(venues.join('・'))}　${n}レース</small></h1>
+  ${nsBoard(races,now,isToday)}${isToday?nsNextCard(nsNext(races,now),now):''}
+  <div class="ns-seg" role="group" aria-label="競馬場">${venues.map(x=>`<button data-venue="${esc(x)}" aria-pressed="${x===v}">${esc(x)}<small>${races.filter(r=>r.baba_name===x&&r.status!=='cancelled').length}</small></button>`).join('')}</div>
+  ${open.length?`<div class="ns-races">${open.map(r=>nsRow(r,now,isToday)).join('')}</div>`:''}
+  ${done.length?(isToday?`<details class="ns-done"${open.length?'':' open'}><summary>終わったレース ${done.length}</summary><div class="ns-races">${done.map(r=>nsRow(r,now,isToday)).join('')}</div></details>`:`<div class="ns-races">${done.map(r=>nsRow(r,now,false)).join('')}</div>`):''}`;
+}
+async function nsFetchDay(date){
+  const r=await fetch('/api/day?date='+encodeURIComponent(date)+'&t='+Date.now(),{cache:'no-store'});let j={};
+  try{j=await r.json()}catch(e){}
+  if(!r.ok||!j.ok)throw new Error(j.error||'レース一覧を取得できませんでした（HTTP '+r.status+'）');
+  return j.races||[];
+}
+async function nsShowDay(date,quiet){
+  const view=$('nsView');if(!quiet)view.innerHTML='<div class="ns-skel"></div>';
+  try{const races=await nsFetchDay(date);if(NS.date!==date)return;NS.races=races;view.innerHTML=nsDayHTML(date,races,new Date())}
+  catch(e){if(NS.date!==date)return;if(!quiet||!NS.races.length)view.innerHTML=`<div class="ns-err">${esc(e.message)}。少し待って右上の更新を押してください。</div>`}
+}
+async function nsShowDays(){
+  const view=$('nsView');view.innerHTML='<div class="ns-skel"></div>';
+  try{const r=await fetch('/api/days',{cache:'no-store'}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'HTTP '+r.status);
+    const today=nsToday(),days=(j.days||[]).filter(d=>d.date!=='2026-10-07');
+    view.innerHTML=`<div class="ns-title"><h1>過去の開催</h1><p>日付を押すと、競馬場ごとのレースと結果を見られます。</p></div>${days.length?`<div class="ns-days">${days.map(d=>`<a class="ns-dayrow" href="${d.date===today?'#/':'#/past/'+esc(d.date)}"><b>${nsDayLabel(d.date)}${d.date===today?'　今日':''}</b><span>${esc(d.venues||'')}</span><em>${d.complete}/${d.races}</em></a>`).join('')}</div>`:'<div class="ns-empty">まだ記録された開催はありません。</div>'}`}
+  catch(e){view.innerHTML=`<div class="ns-err">開催日の一覧を取得できませんでした：${esc(e.message)}</div>`}
+}
+async function nsHealth(){
+  const el=$('nsHealth');if(!el)return;
+  try{const r=await fetch('/api/capture-health?t='+Date.now(),{cache:'no-store'}),j=await r.json();if(!j.ok)throw new Error(j.error||'HTTP '+r.status);
+    const s=j.summary||{},sc=j.scheduler||{},sy=j.schedule||{},miss=Object.entries(s.missed_by_reason||{}).map(([k,v])=>`${NS_MISS[k]||k} ${v}`).join('、')||'なし';
+    el.innerHTML=`<dl><dt>今日の取得</dt><dd>${s.slots_ok??0}/${s.slots_due??0}時点（${s.success_rate==null?'—':Math.round(s.success_rate*100)+'%'}）</dd>
+    <dt>取り逃しの内訳</dt><dd>${esc(miss)}</dd>
+    <dt>取得処理</dt><dd class="${sc.stale?'ng':'ok'}">${sc.stale?'停止の疑い':'動いています'}（${sc.beat_age_s==null?'—':Math.round(sc.beat_age_s)+'秒前に確認'}）</dd>
+    <dt>自動予約</dt><dd class="${sy.error?'ng':'ok'}">${sy.error?'エラー：'+esc(sy.error):sy.last_ok?nsHM(sy.last_ok)+'に取り込み':'未実行'}</dd>
+    <dt>停止の記録</dt><dd>${(sc.gaps_today||[]).length?`${sc.gaps_today.length}回`:'なし'}</dd></dl>`}
+  catch(e){el.innerHTML=`<div class="ns-err">取得の状態を確認できませんでした：${esc(e.message)}</div>`}
+}
+function nsSetNav(page){document.querySelectorAll('.ns-nav a').forEach(a=>a.setAttribute('aria-current',a.dataset.page===page?'page':'false'))}
+function nsShowPage(which){
+  ['nsView','nsRecord','nsMore','nsRaceBar'].forEach(id=>{const el=$(id);if(el)el.hidden=true});
+  if(which!=='race'){const d=$('detail');if(d)d.style.display='none';if(typeof stopFlow==='function')stopFlow();cur=null}
+  (which==='race'?['nsRaceBar']:[which]).forEach(id=>{const el=$(id);if(el)el.hidden=false});
+}
+async function nsRoute(){
+  const h=decodeURIComponent(location.hash.replace(/^#\/?/,'')),[page,...rest]=h.split('/'),arg=rest.join('/');
+  NS.route=h;
+  if(page==='race'&&arg){nsShowPage('race');nsSetNav('');window.scrollTo(0,0);await show(arg);return}
+  window.scrollTo(0,0);
+  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();return}
+  if(page==='more'){nsShowPage('nsMore');nsSetNav('more');NS.back='#/more';nsHealth();return}
+  nsShowPage('nsView');
+  if(page==='past'&&!arg){nsSetNav('past');NS.date=null;NS.back='#/past';await nsShowDays();return}
+  const date=page==='past'?arg:nsToday();NS.date=date;NS.back=page==='past'?'#/past/'+date:'#/';nsSetNav(page==='past'?'past':'today');
+  await nsShowDay(date);
+}
+// 既存コード（予約・取消・更新ボタン）から呼ばれる一覧の再読み込み
+function load(){if(NS.date&&!$('nsView').hidden)return nsShowDay(NS.date,true);return Promise.resolve()}
+function nsTick(){
+  const now=new Date();updateClock();
+  const c=$('nsCount');if(c&&NS.date===nsToday()&&!$('nsView').hidden){const nx=nsNext(NS.races,now);if(nx)c.textContent=nsMMSS((new Date(nx.start_iso)-now)/1000)}
+}
+document.addEventListener('click',e=>{
+  const v=e.target.closest('[data-venue]');if(v&&$('nsView').contains(v)){NS.venue=v.dataset.venue;nsStore('nsVenue',NS.venue);if(NS.date)$('nsView').innerHTML=nsDayHTML(NS.date,NS.races,new Date());return}
+  const r=e.target.closest('[data-race]');if(r&&!r.closest('#detail')){location.hash='#/race/'+encodeURIComponent(r.dataset.race)}
+});
+async function cancelR(k){
+  if(!k||!confirm('このレースのオッズ記録をやめますか？（取得済みのデータは残ります）'))return;
+  const btn=$('nsCancel');if(btn){btn.disabled=true;btn.textContent='処理中…'}
+  try{
+    const r=await fetch('/api/cancel',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({race_key:k})});
+    const j=await r.json();
+    if(!r.ok||!j.ok||j.status!=='cancelled')throw new Error(j.error||'HTTP '+r.status);
+    if(cur===k){cur=null;nsStore('oddsScopeCur','');$('detail').style.display='none'}
+    $('msg').textContent='記録をやめました';
+    location.hash=NS.back||'#/';
+    await load();
+  }catch(e){
+    alert('取り消せませんでした：'+e.message);$('msg').textContent='取り消せませんでした：'+e.message;
+  }finally{if(btn){btn.disabled=false;btn.textContent='このレースの記録をやめる'}}
+}
 function rate(x){return x==null?'—':(x*100).toFixed(1)+'%'}
+const NS_SYS={COLLECTING:['集計中','30レースまでは判定しません'],PASS:['人気を上回る','直近30レースで人気上位3頭より良い'],HOLD:['人気と同程度','直近30レースで人気上位3頭と同水準'],REVIEW:['人気を下回る','人気薄の昇格と学習の反映を自動で抑えています']};
+const NS_MODEL={COLLECTING:'学習データを集めています',ACTIVE:'学習モデルを使用中',KEEP_HEURISTIC:'検証の結果、学習モデルは採用していません'};
 async function learn(){try{
-  let x=await(await fetch('/api/learning',{cache:'no-store'})).json(),bw=Math.round((x.model_blend_weight||0)*100),hv=x.heuristic_val==null?'—':(x.heuristic_val*100).toFixed(1)+'%',lv=x.learned_val==null?'—':(x.learned_val*100).toFixed(1)+'%';
-  let rp=x.recent_performance||{},rf=x.recent_favorite||{},status=x.system_status||'COLLECTING';let gg=x.guardrail||{};
-  $('learn').innerHTML=`<div class="head" style="margin-bottom:8px"><b>RESULT CHECK</b><span class="systemCheck ${esc(status)}">${esc(status)}</span></div><div class="validation"><div class="vbox"><span>実際のFINAL上位3</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}R・候補単位3着内率<br>1位候補3着内 ${rate(rp.top1_place_rate)}</small></div><div class="vbox"><span>人気上位3</span><b>${rate(rf.pick_rate)}</b><small>同期間ベースライン<br>レース捕捉 ${rate(rf.race_hit_rate)}</small></div><div class="vbox"><span>FINALレース捕捉</span><b>${rate(rp.race_hit_rate)}</b><small>3頭中1頭以上が3着内</small></div><div class="vbox"><span>3/3 CAPTURE</span><b>${rate(rp.perfect3_rate)}</b><small>上位3頭を全て捕捉</small></div></div><div class="note"><b>学習 ${x.model_status||'COLLECTING'} · FINAL反映 ${bw}%</b><br>学習データ ${x.learning_races||0}/${x.min_train_races}レース · ${x.learning_samples||0}頭。時系列検証 SCOPE ${hv} / 学習 ${lv}。学習モデルは、SCOPEを1.5pt以上改善し、1位候補・レース捕捉を悪化させない場合だけ採用します。RESULT GUARD ${gg.status||'COLLECTING'} は直近30Rで人気基準を下回ると人気薄の昇格と学習比率を自動抑制します。<br><span class="muted">SYSTEM CHECKは30レース未満ではCOLLECTING。30レース以降は同期間の人気上位3頭を基準にPASS / HOLD / REVIEWを判定します。</span></div>`
- }catch(e){}}
-
-
-function roiCell(v){if(!v||v.roi==null)return '<td>—</td>';let cls=v.roi>=1?'up':'down',ci=v.ci95?`${pct(v.ci95[0])}〜${pct(v.ci95[1])}`:'区間は20R以上で表示';return `<td><b class="${cls}">${pct(v.roi)}</b><small>的中${pct(v.hit_rate)} · ${ci}</small></td>`}
+  const x=await(await fetch('/api/learning',{cache:'no-store'})).json(),rp=x.recent_performance||{},rf=x.recent_favorite||{},st=NS_SYS[x.system_status]||NS_SYS.COLLECTING;
+  $('learn').innerHTML=`<h2 class="ns-h2">3着内に入った割合</h2><div class="ns-stats">
+  <div class="ns-stat"><span>FINAL上位3頭</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}レース・候補1頭ごと</small></div>
+  <div class="ns-stat base"><span>人気上位3頭</span><b>${rate(rf.pick_rate)}</b><small>同じレースでの基準</small></div>
+  <div class="ns-stat"><span>1頭以上が3着内</span><b>${rate(rp.race_hit_rate)}</b><small>人気上位3頭は ${rate(rf.race_hit_rate)}</small></div>
+  <div class="ns-stat"><span>1位候補が3着内</span><b>${rate(rp.top1_place_rate)}</b><small>3頭とも3着内 ${rate(rp.perfect3_rate)}</small></div></div>
+  <p class="ns-note">判定：<b>${st[0]}</b>（${st[1]}）。${NS_MODEL[x.model_status]||NS_MODEL.COLLECTING}：${x.learning_races||0}/${x.min_train_races||80}レース・${x.learning_samples||0}頭。学習モデルは、時系列の検証で今の計算式より良い場合だけ使います。</p>`;
+ }catch(e){$('learn').innerHTML='<div class="ns-err">成績を取得できませんでした。少し待って更新してください。</div>'}}
+function roiCell(v){if(!v||v.roi==null)return '<td>—</td>';const ci=v.ci95?`${rate(v.ci95[0])}〜${rate(v.ci95[1])}`:'区間は20レースから';return `<td><b class="${v.roi>=1?'up':'down'}">${rate(v.roi)}</b><small>的中 ${rate(v.hit_rate)}</small><small>${ci}</small></td>`}
 async function roiLoad(){try{
-  let x=await(await fetch('/api/roi',{cache:'no-store'})).json();if(!x.ok)return;
-  let rows=(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('');
-  let late=(x.late_money||[]).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.horses||0}頭</td><td>${pct(b.place_rate)}</td><td>${pct(b.place_roi)}</td></tr>`).join('');
-  $('roi').innerHTML=`<div class="roiBox"><div class="roiHead"><b>ROI CHECK</b><small>公式払戻 · ${x.races||0}レース · 各100円</small></div><table class="roiTable"><thead><tr><th>券種（候補3頭）</th><th>FINAL上位3</th><th>人気上位3</th></tr></thead><tbody>${rows}</tbody></table><div class="roiNote">回収率が100%以上なら緑。95%区間が100%をまたぐ間は、偶然と区別できません。</div></div><div class="roiBox"><div class="roiHead"><b>LATE MONEY</b><small>3分前→確定の単勝オッズ変化 · ${x.late_money_races||0}レース</small></div><table class="roiTable"><thead><tr><th>動き</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${late}</tbody></table><div class="roiNote">急に売れた＝確定オッズが3分前より20%以上下落。人気の差も含むため、傾向の確認用です。</div></div>`;
- }catch(e){}}
-
+  const x=await(await fetch('/api/roi',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
+  $('roi').innerHTML=`<section class="ns-block"><h2 class="ns-h2">回収率（公式の払戻金）</h2><p class="ns-note">${x.races||0}レース、1点100円で計算。100%以上が緑。下の段は95%の範囲で、100%をまたぐ間は偶然と区別できません。</p>
+  <table class="ns-tbl"><thead><tr><th>買い方（3頭）</th><th>FINAL上位3</th><th>人気上位3</th></tr></thead><tbody>${(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('')}</tbody></table></section>
+  <section class="ns-block"><h2 class="ns-h2">締切直前の売れ方</h2><p class="ns-note">3分前から確定までに単勝オッズがどう動いた馬が走ったか（${x.late_money_races||0}レース・${x.late_money_horses||0}頭）。人気の差も含むため、傾向の確認用です。</p>
+  <table class="ns-tbl"><thead><tr><th>動き</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(x.late_money||[]).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.horses||0}</td><td>${rate(b.place_rate)}</td><td><b class="${(b.place_roi||0)>=1?'up':'down'}">${rate(b.place_roi)}</b></td></tr>`).join('')}</tbody></table>
+  <p class="ns-note">急に売れた＝確定オッズが3分前より20%以上下がった馬。</p></section>`;
+ }catch(e){$('roi').innerHTML='<div class="ns-err">回収率を取得できませんでした。</div>'}}
 let refreshBusy=false;
 async function refreshHeaderData(){
- if(refreshBusy)return;
- refreshBusy=true;
- const b=document.getElementById('headerRefresh');
- b.disabled=true;b.textContent='↻ 更新中…';
- try{
-  await Promise.all([load(),learn(),roiLoad(),...(cur?[show(cur,true)]:[])]);
-  b.textContent='✓ 更新完了';
- }catch(e){b.textContent='⚠ 更新失敗'}
- finally{
-  b.disabled=false;refreshBusy=false;
-  setTimeout(()=>{if(!refreshBusy)b.textContent='↻ 更新'},2500);
- }
+  if(refreshBusy)return;refreshBusy=true;const b=$('headerRefresh');b.classList.add('spin');
+  try{await Promise.all([NS.route.startsWith('race/')&&cur?show(cur,true):nsRoute(),...(NS.route==='record'?[learn(),roiLoad()]:[])])}catch(e){}
+  finally{refreshBusy=false;setTimeout(()=>b.classList.remove('spin'),400)}
 }
-(async()=>{updateClock();await load();learn();roiLoad();if(cur)show(cur,true)})();setInterval(updateClock,1000);setInterval(()=>{if(cur)show(cur,true)},20000);setInterval(()=>{if(!document.hidden)load()},10000);setInterval(()=>{learn();roiLoad()},60000);
+// ---- boot ----
+$('nsBack').addEventListener('click',e=>{e.preventDefault();location.hash=NS.back||'#/'});
+$('nsCancel').addEventListener('click',()=>cancelR(cur));
+window.addEventListener('hashchange',nsRoute);
+NS.venue=nsStore('nsVenue')||null;
+nsRoute();updateClock();
+setInterval(nsTick,1000);
+setInterval(()=>{if(!document.hidden&&NS.date&&!$('nsView').hidden)nsShowDay(NS.date,true)},15000);
+setInterval(()=>{if(cur&&NS.route.startsWith('race/'))show(cur,true)},20000);
+setInterval(()=>{if(!document.hidden&&NS.route==='record'){learn();roiLoad()}},60000);
 </script>
 </body></html>

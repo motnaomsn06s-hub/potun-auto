@@ -60,8 +60,9 @@ def init():
  c.commit();c.close()
  # Where a reservation came from: 'manual' (form) or 'auto' (official schedule import). Additive only.
  c=con()
- try:c.execute("ALTER TABLE races ADD COLUMN source TEXT DEFAULT 'manual'");c.commit()
- except Exception:c.rollback()
+ for col,typ in (("source","TEXT DEFAULT 'manual'"),("race_name","TEXT"),("course","TEXT"),("field_size","INTEGER")):
+  try:c.execute(f"ALTER TABLE races ADD COLUMN {col} {typ}");c.commit()
+  except Exception:c.rollback()
  c.close()
  # PostgreSQL migration. Version 10 adds official NAR performance profiles while preserving market learning.
  c=con()
@@ -1297,13 +1298,17 @@ def sync_schedule(log,force=False):
      start=datetime.fromisoformat(f"{day}T{x['time']}:00+09:00")
      old=c.execute("SELECT start_iso,status FROM races WHERE race_key=%s",(key,)).fetchone()
      if old:
+      # Descriptive fields only (name, course, field size); status and times are handled below.
+      c.execute("""UPDATE races SET race_name=%s,course=%s,field_size=%s WHERE race_key=%s
+        AND (race_name IS DISTINCT FROM %s OR course IS DISTINCT FROM %s OR field_size IS DISTINCT FROM %s)""",
+        (x.get("name") or None,x.get("course") or None,x.get("field"),key,x.get("name") or None,x.get("course") or None,x.get("field")))
       if old["status"]=="reserved" and old["start_iso"]!=start.isoformat() and start>now:
        c.execute("UPDATE races SET start_iso=%s WHERE race_key=%s AND status='reserved'",(start.isoformat(),key))
        chg+=1;log(key,None,"POST_TIME_CHANGED",f"{old['start_iso'][11:16]} -> {x['time']}")
       continue
      if (start-now).total_seconds()<180:continue  # too late to capture anything; never backfilled
-     c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked,source)
-       VALUES(%s,%s,%s,%s,%s,%s,'reserved',%s,0,'auto') ON CONFLICT(race_key) DO NOTHING""",(key,day,baba,name,x["race"],start.isoformat(),now.isoformat()))
+     c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked,source,race_name,course,field_size)
+       VALUES(%s,%s,%s,%s,%s,%s,'reserved',%s,0,'auto',%s,%s,%s) ON CONFLICT(race_key) DO NOTHING""",(key,day,baba,name,x["race"],start.isoformat(),now.isoformat(),x.get("name") or None,x.get("course") or None,x.get("field")))
      ins+=1
     c.commit()
    finally:c.close()
@@ -1558,6 +1563,44 @@ def races():
   try:c.close()
   except Exception:pass
   return jsonify(races=[],error="予約一覧を取得できません。時間をおいて再試行してください。"),503
+def _day_payload(day):
+ """One date's races for the list view: light fields only (no odds payloads)."""
+ c=con()
+ try:
+  rr=[dict(x) for x in c.execute("SELECT race_key,date,baba,baba_name,race,start_iso,status,source,race_name,course,field_size FROM races WHERE date=%s ORDER BY start_iso,race_key",(day,)).fetchall()]
+  keys=[r["race_key"] for r in rr];slots={};res={};picks={}
+  if keys:
+   for x in c.execute("""SELECT race_key,slot,COALESCE(substring(payload from '"parser_version": *([0-9]+)')::int,0) AS pv
+     FROM snapshots WHERE race_key = ANY(%s)""",(keys,)).fetchall():
+    if int(x["pv"] or 0)>=DATA_VERSION:slots.setdefault(x["race_key"],[]).append(int(x["slot"]))
+   for x in c.execute("SELECT race_key,first_horse,second_horse,third_horse,payload FROM results WHERE race_key = ANY(%s)",(keys,)).fetchall():
+    top=[x["first_horse"],x["second_horse"],x["third_horse"]];places=[1,2,3]
+    try:
+     pl=json.loads(x["payload"] or "null")
+     if isinstance(pl,dict) and pl.get("order") and pl.get("places"):top,places=pl["order"],pl["places"]
+    except Exception:pass
+    res[x["race_key"]]={"order":top,"places":places}
+   for x in c.execute("SELECT race_key,horse FROM predictions WHERE race_key = ANY(%s) ORDER BY race_key,rank",(keys,)).fetchall():picks.setdefault(x["race_key"],[]).append(int(x["horse"]))
+ finally:c.close()
+ for r in rr:
+  r["slots"]=sorted(set(slots.get(r["race_key"],[])),reverse=True);r["result"]=res.get(r["race_key"]);r["picks"]=picks.get(r["race_key"],[])[:3]
+ return rr
+@app.route("/api/day")
+def day_api():
+ try:
+  day=datetime.fromisoformat(request.args.get("date") or datetime.now(JST).date().isoformat()).date().isoformat()
+  return jsonify(ok=True,date=day,now=datetime.now(JST).isoformat(),races=_day_payload(day))
+ except Exception as e:return jsonify(ok=False,error="レース一覧を取得できませんでした。少し待って更新してください。",detail=f"{type(e).__name__}"),503
+@app.route("/api/days")
+def days_api():
+ try:
+  c=con()
+  try:rows=[dict(x) for x in c.execute("""SELECT date,COUNT(*) FILTER (WHERE status!='cancelled') AS races,
+    COUNT(*) FILTER (WHERE status='complete') AS complete,STRING_AGG(DISTINCT baba_name,'・') AS venues
+    FROM races WHERE date!=%s GROUP BY date HAVING COUNT(*) FILTER (WHERE status!='cancelled')>0 ORDER BY date DESC LIMIT 120""",("2026-10-07",)).fetchall()]
+  finally:c.close()
+  return jsonify(ok=True,days=rows)
+ except Exception as e:return jsonify(ok=False,error="開催日の一覧を取得できませんでした。",days=[]),503
 @app.route("/api/cancel",methods=["POST"])
 def cancel():
  try:
