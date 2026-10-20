@@ -116,7 +116,7 @@ class RecoveryTests(unittest.TestCase):
                      ("COALESCE(result_checked,0)=0", [done])])
         store = Mock(return_value=12)
         with patch.dict(self.ns, con=Mock(return_value=db), soup=Mock(return_value=None),
-                        parse_result=Mock(return_value=[3, 7, 1]), store_learning_samples=store,
+                        parse_result_places=Mock(return_value=[(1, 3), (2, 7), (3, 1)]), store_learning_samples=store,
                         maybe_train=Mock(return_value={'status': 'COLLECTING'})):
             events = self.ns['due']()
         self.assertIn('2026-10-17:31:10:RESULT:[3, 7, 1]', events)
@@ -132,7 +132,7 @@ class RecoveryTests(unittest.TestCase):
         db = FakeDB([("start_iso >= %s AND start_iso <= %s", [future]),
                      ("COALESCE(result_checked,0)=0", [done])])
         with patch.dict(self.ns, con=Mock(return_value=db), soup=Mock(return_value=None), load_profiles=Mock(return_value={1: {}}),
-                        parse_result=Mock(return_value=[1, 2, 3]), store_learning_samples=Mock(return_value=10),
+                        parse_result_places=Mock(return_value=[(1, 1), (2, 2), (3, 3)]), store_learning_samples=Mock(return_value=10),
                         maybe_train=Mock(return_value={})):
             events = self.ns['due']()
         self.assertIn('d:RESULT:[1, 2, 3]', events)
@@ -146,7 +146,7 @@ class RecoveryTests(unittest.TestCase):
         soup = Mock(return_value=None)
         take = Mock(side_effect=lambda r: {'fetched_at': datetime.now(self.ns['JST']).isoformat(), 'counts': {}})
         with patch.dict(self.ns, con=Mock(return_value=db), soup=soup, take=take,
-                        save_predictions=Mock(return_value=[]), parse_result=Mock(return_value=[1, 2, 3])):
+                        save_predictions=Mock(return_value=[]), parse_result_places=Mock(return_value=[(1, 1), (2, 2), (3, 3)])):
             events = self.ns['due']()
         self.assertIn('live:5', events)
         soup.assert_not_called()

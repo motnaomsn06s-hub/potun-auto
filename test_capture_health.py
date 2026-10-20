@@ -135,7 +135,7 @@ class MaintenanceTests(unittest.TestCase):
                      ("COALESCE(result_checked,0)=0", [done]),
                      ("SELECT slot,payload FROM snapshots WHERE race_key=%s", [{'slot': s, 'payload': payload} for s in (5, 4, 3)])])
         with patch.dict(self.ns, con=Mock(return_value=db), soup=Mock(return_value=None),
-                        parse_result=Mock(return_value=[1, 8, 5]), store_learning_samples=Mock(return_value=0)):
+                        parse_result_places=Mock(return_value=[(1, 1), (2, 8), (3, 5)]), store_learning_samples=Mock(return_value=0)):
             self.ns['due'](capture=False)
         details = [p[4] for sql, p in db.calls if 'INSERT INTO capture_log' in sql and p[3] == 'RESULT']
         self.assertTrue(details and 'missing_slots=[15, 10]' in details[0], details)
