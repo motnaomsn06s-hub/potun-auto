@@ -367,6 +367,13 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-gauge i.next{width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--ns-sand-hi);box-shadow:0 0 0 3px rgba(240,212,154,.15),0 0 14px rgba(240,212,154,.75)}
 @media (prefers-reduced-motion:no-preference){.ns-gauge i.next{animation:ns-glow 2.4s ease-in-out infinite}}
 @keyframes ns-glow{50%{box-shadow:0 0 0 6px rgba(240,212,154,.06),0 0 22px rgba(240,212,154,.9)}}
+.ns-vrow.ended{grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:"name next meta";align-items:center;padding:12px 18px;background:var(--ns-panel)}
+.ns-vrow.ended .ns-vname{font-size:18px;color:var(--ns-mute)}
+.ns-vrow.ended .ns-vnext small{display:none}
+.ns-vrow.ended .ns-vnext b.end{font-size:14px}
+.ns-vrow.ended .ns-vleft{display:none}
+.ns-vrow.ended .ns-vmeta{justify-content:flex-end}
+.ns-vrow.ended[aria-pressed="true"] .ns-vname{color:var(--ns-sand-hi)}
 .ns-vmeta{grid-area:meta;display:flex;gap:16px;font-size:11.5px;letter-spacing:.06em;color:var(--ns-faint)}
 .ns-vmeta b{font-family:var(--ns-num);font-size:14px;font-weight:600;color:var(--ns-ink);letter-spacing:0}
 .ns-vmeta i{font-style:normal;margin:0 2px;color:var(--ns-faint)}
@@ -885,7 +892,9 @@ function nsVenueStats(races,v,now,isToday){
   return {all,live,done,nx,cap};
 }
 function nsBoard(races,now,isToday,selected){
-  const venues=nsVenues(races);if(!venues.length)return '';
+  let venues=nsVenues(races);if(!venues.length)return '';
+  // 開催中（次のレースがある場）を発走が近い順に上へ、終わった場は下に畳む
+  if(isToday){const nx=v=>{const r=nsNext(races.filter(x=>x.baba_name===v),now);return r?new Date(r.start_iso).getTime():Infinity};venues=venues.slice().sort((a,b)=>nx(a)-nx(b))}
   const rows=venues.map(v=>{
     const st=nsVenueStats(races,v,now,isToday),m=st.nx?nsMins(st.nx.start_iso,now):null,n=st.all.length;
     const next=st.nx?`<span class="ns-vnext"><small>次は ${st.nx.race}R</small><b>${nsHM(st.nx.start_iso)}</b></span>`
@@ -898,7 +907,8 @@ function nsBoard(races,now,isToday,selected){
     const ticks=st.all.map((r,i)=>{const c=r.status==='cancelled'?'off':i===nxi?'next':nsFinished(r,now)?((r.slots||[]).length===5?'full':'part'):'';return `<i class="${c}" style="left:${X(i)}"></i>`}).join('');
     const gauge=`<span class="ns-gauge" aria-label="${esc(v)} ${st.done.length}/${st.live.length}レース終了"><span class="fill" style="width:${reach<0?0:X(reach)}"></span>${ticks}</span>`;
     const meta=`<span class="ns-vmeta"><span><b>${st.done.length}</b><i>/</i>${st.live.length}<small>R</small></span>${st.cap==null?'':`<span>取得 <b>${Math.round(st.cap*100)}</b><small>%</small></span>`}${st.all.length>st.live.length?`<span>取消 ${st.all.length-st.live.length}</span>`:''}</span>`;
-    return `<button class="ns-vrow" data-venue="${esc(v)}" aria-pressed="${v===selected}"><span class="ns-vname">${esc(v)}</span>${next}${left}${gauge}${meta}</button>`;
+    const ended=isToday&&!st.nx;
+    return `<button class="ns-vrow${ended?' ended':''}" data-venue="${esc(v)}" aria-pressed="${v===selected}"><span class="ns-vname">${esc(v)}</span>${next}${left}${ended?'':gauge}${meta}</button>`;
   }).join('');
   return `<section class="ns-vboard" aria-label="開催中の競馬場">${rows}</section>`;
 }

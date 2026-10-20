@@ -34,7 +34,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  ctx.NS.venue=null;
  let out=ctx.nsDayHTML('2026-10-20',races,now);
  assert(out.includes('data-venue="門別"')&&out.includes('data-venue="盛岡"')&&out.includes('data-venue="浦和"'));
- assert(out.indexOf('data-venue="門別"')<out.indexOf('data-venue="盛岡"')&&out.indexOf('data-venue="盛岡"')<out.indexOf('data-venue="浦和"'),'north-to-south venue order');
+ assert(out.indexOf('data-venue="浦和"')<out.indexOf('data-venue="門別"')&&out.indexOf('data-venue="門別"')<out.indexOf('data-venue="盛岡"'),'venues with the nearest next race come first');
  assert(out.includes('ns-vboard'),'venue board');assert(/<i class="next" style="left:[0-9.]+%"><\/i>/.test(out),'next race glows on its venue gauge');
  assert.equal(ctx.NS.venue,'浦和','default tab = venue of next race');
  assert(out.includes('秋風特別')&&out.includes('左1400m　11頭'));
