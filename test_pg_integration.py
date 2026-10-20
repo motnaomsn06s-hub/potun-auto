@@ -165,6 +165,19 @@ class PostgresIntegration(unittest.TestCase):
         days = a.app.test_client().get('/api/days').json['days']
         self.assertIn({'date': '2001-03-04', 'races': 1, 'complete': 1, 'venues': '門別'}, days)
 
+    def test_favorite_audit_api(self):
+        a = self.app
+        key = '2001-05-06:20:11'
+        self.sql("INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,'2001-05-06','20','大井',11,'2001-05-06T20:10:00+09:00','complete','x',1)", (key,))
+        rows3 = [{'horse': 4, 'odds': 1.3, 'base': -0.8}, {'horse': 7, 'odds': 5.0, 'base': 0.2}]
+        rows15 = [{'horse': 4, 'odds': 1.1, 'base': 0.1}, {'horse': 7, 'odds': 6.0, 'base': 0.0}]
+        self.sql("INSERT INTO snapshots VALUES(%s,3,'x',%s),(%s,15,'x',%s)", (key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': rows3}), key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': rows15})))
+        self.sql("INSERT INTO results VALUES(%s,7,2,9,'x',%s)", (key, json.dumps({'order': [7, 2, 9], 'places': [1, 2, 3], 'payouts': {'複勝': [{'combo': [7], 'yen': 180, 'pop': 2}]}})))
+        body = a.app.test_client().get('/api/favorite-audit').json
+        self.assertTrue(body['ok'])
+        ex = [e for e in body['examples'] if e['race_key'] == key][0]
+        self.assertEqual((ex['horse'], ex['verdict'], ex['placed'], ex['place_yen']), (4, '危険', False, 0))
+
     def test_advisory_lease_is_exclusive(self):
         a = self.app
         inner = []
