@@ -207,6 +207,7 @@ details{border-radius:13px;margin:9px 0;overflow:hidden}summary{padding:11px 13p
 
 /* Ver.13 RACE FLOW + RESULT GUARD */
 .guardBar{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;border:1px solid #2b4657;border-radius:12px;padding:9px 10px;margin:0 0 10px;background:#07131d}.guardBar b{font:950 10px var(--mono);letter-spacing:.08em}.guardBar small{color:#8197a7;font-size:9px}.guardState{padding:5px 8px;border-radius:999px;border:1px solid #3a5363;font:900 8px var(--mono)}.guardState.PASS{color:#6fe3a6;border-color:#2a6b4b}.guardState.HOLD{color:#f0ca65;border-color:#725f28}.guardState.REVIEW{color:#ff9299;border-color:#74424a}.guardState.COLLECTING{color:#91b8d2;border-color:#3c5e73}
+.roiBox{margin-top:12px;border:1px solid #2b4657;border-radius:12px;padding:10px;background:#07131d}.roiBox .roiHead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}.roiBox .roiHead b{font:950 11px var(--mono);letter-spacing:.08em}.roiBox .roiHead small{color:#8197a7;font-size:10px}.roiTable{width:100%;border-collapse:collapse;font-size:12px}.roiTable th{color:#8197a7;font-weight:700;font-size:10px;text-align:right;padding:4px 2px;border-bottom:1px solid #1d3442}.roiTable th:first-child,.roiTable td:first-child{text-align:left}.roiTable td{text-align:right;padding:6px 2px;border-bottom:1px solid #12242f;font-variant-numeric:tabular-nums}.roiTable td b{font-size:13px}.roiTable td small{display:block;color:#6f8798;font-size:9px}.roiTable .up{color:#6fe3a6}.roiTable .down{color:#ff9299}.roiNote{color:#8197a7;font-size:10px;line-height:1.5;margin-top:8px}
 .flowPanel{overflow:hidden}.flowHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.flowHead h2{margin:0}.flowMeta{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.flowPill{border:1px solid #31536a;border-radius:999px;padding:5px 7px;font:900 8px var(--mono);color:#9fc6dc;background:#07131d}.flowPill.high{color:#ff9da6;border-color:#75424a}.flowPill.balanced{color:#7be3dc;border-color:#2f6c68}.flowPill.slow{color:#f1ca68;border-color:#6e5d2b}
 .flowStage{margin-top:10px;border:1px solid #213a4b;border-radius:14px;background:linear-gradient(180deg,#07131d,#040b12);padding:10px;overflow:hidden}.flowControls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.flowControls button{border:1px solid #335366;background:#0a1a26;color:#c9dbe6;border-radius:9px;padding:8px 10px;min-height:38px;font:850 9px var(--mono)}.flowControls button.primary{border-color:#8a7026;color:#ffe57d;background:linear-gradient(180deg,#33270a,#201a08)}.flowControls button.isPlaying{border-color:#2b7773;color:#7eece4;background:#082824}.flowPhase{margin-left:auto;font:950 11px var(--mono);color:#ffe071;letter-spacing:.08em}.flowTruth{display:inline-flex;align-items:center;gap:5px;color:#7890a1;font-size:8px}.flowTruth:before{content:'◉';color:#62d8d0}
 
@@ -295,6 +296,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   <section class="panel pad" id="learningPanel" style="margin-top:12px;border:1px solid #365a70">
     <div class="head"><h2>学習状況・予想精度</h2><span class="badge">自動更新</span></div>
     <div id="learn" class="muted" aria-live="polite">学習データを取得中…</div>
+    <div id="roi" aria-live="polite"></div>
   </section>
   <section class="panel pad">
     <div class="head"><h2>レース予約</h2><span class="badge">発走3分前まで予約可</span></div>
@@ -652,6 +654,14 @@ async function learn(){try{
  }catch(e){}}
 
 
+function roiCell(v){if(!v||v.roi==null)return '<td>—</td>';let cls=v.roi>=1?'up':'down',ci=v.ci95?`${pct(v.ci95[0])}〜${pct(v.ci95[1])}`:'区間は20R以上で表示';return `<td><b class="${cls}">${pct(v.roi)}</b><small>的中${pct(v.hit_rate)} · ${ci}</small></td>`}
+async function roiLoad(){try{
+  let x=await(await fetch('/api/roi',{cache:'no-store'})).json();if(!x.ok)return;
+  let rows=(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('');
+  let late=(x.late_money||[]).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.horses||0}頭</td><td>${pct(b.place_rate)}</td><td>${pct(b.place_roi)}</td></tr>`).join('');
+  $('roi').innerHTML=`<div class="roiBox"><div class="roiHead"><b>ROI CHECK</b><small>公式払戻 · ${x.races||0}レース · 各100円</small></div><table class="roiTable"><thead><tr><th>券種（候補3頭）</th><th>FINAL上位3</th><th>人気上位3</th></tr></thead><tbody>${rows}</tbody></table><div class="roiNote">回収率が100%以上なら緑。95%区間が100%をまたぐ間は、偶然と区別できません。</div></div><div class="roiBox"><div class="roiHead"><b>LATE MONEY</b><small>3分前→確定の単勝オッズ変化 · ${x.late_money_races||0}レース</small></div><table class="roiTable"><thead><tr><th>動き</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${late}</tbody></table><div class="roiNote">急に売れた＝確定オッズが3分前より20%以上下落。人気の差も含むため、傾向の確認用です。</div></div>`;
+ }catch(e){}}
+
 let refreshBusy=false;
 async function refreshHeaderData(){
  if(refreshBusy)return;
@@ -659,7 +669,7 @@ async function refreshHeaderData(){
  const b=document.getElementById('headerRefresh');
  b.disabled=true;b.textContent='↻ 更新中…';
  try{
-  await Promise.all([load(),learn(),...(cur?[show(cur,true)]:[])]);
+  await Promise.all([load(),learn(),roiLoad(),...(cur?[show(cur,true)]:[])]);
   b.textContent='✓ 更新完了';
  }catch(e){b.textContent='⚠ 更新失敗'}
  finally{
@@ -667,6 +677,6 @@ async function refreshHeaderData(){
   setTimeout(()=>{if(!refreshBusy)b.textContent='↻ 更新'},2500);
  }
 }
-(async()=>{updateClock();await load();learn();if(cur)show(cur,true)})();setInterval(updateClock,1000);setInterval(()=>{if(cur)show(cur,true)},20000);setInterval(()=>{if(!document.hidden)load()},10000);setInterval(()=>{learn()},60000);
+(async()=>{updateClock();await load();learn();roiLoad();if(cur)show(cur,true)})();setInterval(updateClock,1000);setInterval(()=>{if(cur)show(cur,true)},20000);setInterval(()=>{if(!document.hidden)load()},10000);setInterval(()=>{learn();roiLoad()},60000);
 </script>
 </body></html>

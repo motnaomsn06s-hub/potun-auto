@@ -37,6 +37,10 @@ def load_app_without_database():
             return True
     import os
     namespace['_loop_state'].update(pid=os.getpid(), thread=_Idle())
+    # Unit tests never reach the official site; tests that need pages patch soup themselves.
+    def _offline(*a, **k):
+        raise RuntimeError('network disabled in unit tests')
+    namespace['soup'] = _offline
     return namespace
 
 
@@ -116,7 +120,7 @@ class RecoveryTests(unittest.TestCase):
                      ("COALESCE(result_checked,0)=0", [done])])
         store = Mock(return_value=12)
         with patch.dict(self.ns, con=Mock(return_value=db), soup=Mock(return_value=None),
-                        parse_result_places=Mock(return_value=[(1, 3), (2, 7), (3, 1)]), store_learning_samples=store,
+                        parse_payouts=Mock(return_value={'単勝': [{'combo': [1], 'yen': 300, 'pop': 1}]}), parse_result_places=Mock(return_value=[(1, 3), (2, 7), (3, 1)]), store_learning_samples=store,
                         maybe_train=Mock(return_value={'status': 'COLLECTING'})):
             events = self.ns['due']()
         self.assertIn('2026-10-17:31:10:RESULT:[3, 7, 1]', events)
@@ -132,7 +136,7 @@ class RecoveryTests(unittest.TestCase):
         db = FakeDB([("start_iso >= %s AND start_iso <= %s", [future]),
                      ("COALESCE(result_checked,0)=0", [done])])
         with patch.dict(self.ns, con=Mock(return_value=db), soup=Mock(return_value=None), load_profiles=Mock(return_value={1: {}}),
-                        parse_result_places=Mock(return_value=[(1, 1), (2, 2), (3, 3)]), store_learning_samples=Mock(return_value=10),
+                        parse_payouts=Mock(return_value={'単勝': [{'combo': [1], 'yen': 300, 'pop': 1}]}), parse_result_places=Mock(return_value=[(1, 1), (2, 2), (3, 3)]), store_learning_samples=Mock(return_value=10),
                         maybe_train=Mock(return_value={})):
             events = self.ns['due']()
         self.assertIn('d:RESULT:[1, 2, 3]', events)
@@ -165,7 +169,7 @@ class RecoveryTests(unittest.TestCase):
         rows = [{'race_key': f'k{i}', 'date': '2026-10-0%d' % (i % 9 + 1), 'start_iso': f'2026-10-0{i % 9 + 1}T15:00:00+09:00',
                  'status': 'complete', 'baba_name': 'X', 'race': i} for i in range(3)]
         db = FakeDB([("FROM races WHERE status!='cancelled'", rows),
-                     ("FROM snapshots WHERE race_key = ANY", [{'race_key': 'k0', 'slot': 15, 'payload': '{"parser_version": 8, "rows": []}'}]),
+                     ("FROM snapshots WHERE race_key = ANY", [{'race_key': 'k0', 'slot': 15, 'pv': 8, 'payload': '{"parser_version": 8, "rows": []}'}]),
                      ("FROM results WHERE race_key = ANY", [])])
         with patch.dict(self.ns, con=Mock(return_value=db)):
             res = self.ns['app'].test_client().get('/api/races?limit=2')
@@ -204,6 +208,8 @@ class RecoveryTests(unittest.TestCase):
                 self.alive = True; started.append(self)
             def is_alive(self):
                 return self.alive
+        patcher = patch.dict('os.environ', {'ODDS_SCOPE_NO_SCHEDULER': '0'})
+        patcher.start(); self.addCleanup(patcher.stop)
         ns['_loop_state'].update(pid=-1)  # as if inherited from a parent process
         with patch.object(ns['threading'], 'Thread', T):
             ns['ensure_auto_loop']()
