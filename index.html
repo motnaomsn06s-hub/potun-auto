@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Shippori+Mincho+B1:wght@600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <link rel="icon" type="image/png" href="/apple-touch-icon.png?v=20261013b">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20261013b">
-<title>ODDS SCOPE NAR — Ver.13.3 CINEMATIC RACE FLOW</title>
+<title>ODDS SCOPE NAR | 地方競馬</title>
 
 <style>
 :root{
@@ -315,7 +315,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-logo{display:flex;align-items:center;gap:9px;color:inherit;text-decoration:none;min-width:0}
 .ns-logo img{width:26px;height:26px;border-radius:7px;box-shadow:0 0 0 1px rgba(217,178,111,.4)}
 .ns-logo b{font-family:var(--ns-num);font-weight:600;font-size:18px;letter-spacing:.14em;white-space:nowrap}
-.ns-logo b span{margin-left:.45em;font-family:var(--ns-head);font-weight:700;letter-spacing:.08em;color:var(--ns-sand)}
+.ns-logo b span{margin-left:.45em;color:var(--ns-sand)}
 .ns-clock{margin-left:auto;font-family:var(--ns-num);font-size:15px;color:var(--ns-mute);font-variant-numeric:tabular-nums}
 .ns-icon{display:inline-grid;place-items:center;width:38px;height:38px;min-height:38px;padding:0;border-radius:50%;border:1px solid var(--ns-line-2);background:transparent;color:var(--ns-sand-hi)}
 .ns-icon svg{width:17px;height:17px}
@@ -494,7 +494,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 <body>
 <div class="app">
   <header class="ns-top">
-    <a class="ns-logo" href="#/" aria-label="今日のレースへ"><img src="/apple-touch-icon.png?v=20261013b" alt=""><b>ODDS SCOPE<span>地方</span></b></a>
+    <a class="ns-logo" href="#/" aria-label="今日のレースへ"><img src="/apple-touch-icon.png?v=20261013b" alt=""><b>ODDS SCOPE<span>NAR</span></b></a>
     <span class="ns-clock" id="clockLabel" aria-label="現在時刻">--:--:--</span>
     <button type="button" class="ns-icon" id="headerRefresh" onclick="refreshHeaderData()" aria-label="最新の状態に更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </header>
@@ -502,7 +502,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
   <main id="nsView" class="ns-view" aria-live="polite"></main>
 
   <section id="nsRecord" class="ns-page" hidden>
-    <div class="ns-title"><h1>成績</h1><p>FINAL上位3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
+    <div class="ns-title"><h1>成績</h1><p>最終候補の3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
     <div id="learn" class="ns-block">集計を読み込んでいます</div>
     <div id="roi"></div>
   </section>
@@ -884,7 +884,7 @@ function nsNextCard(r,now){
 }
 function nsRow(r,now,isToday){
   const m=nsMins(r.start_iso,now),res=r.result,top=new Set(res?(res.order||[]).filter((h,i)=>(res.places||[])[i]<=3):[]);
-  const picks=(r.picks||[]).length?`<span class="p">FINAL ${r.picks.map(h=>`<em class="${top.has(h)?'hit':''}">${h}</em>`).join('')}</span>`:'';
+  const picks=(r.picks||[]).length?`<span class="p">最終候補 ${r.picks.map(h=>`<em class="${top.has(h)?'hit':''}">${h}</em>`).join('')}</span>`:'';
   let state;
   if(r.status==='cancelled')state='<b>—</b>取消';
   else if(res)state=`<b>${(res.order||[]).slice(0,3).join('-')}</b>結果`;
@@ -987,7 +987,7 @@ const NS_MODEL={COLLECTING:'学習データを集めています',ACTIVE:'学習
 async function learn(){try{
   const x=await(await fetch('/api/learning',{cache:'no-store'})).json(),rp=x.recent_performance||{},rf=x.recent_favorite||{},st=NS_SYS[x.system_status]||NS_SYS.COLLECTING;
   $('learn').innerHTML=`<h2 class="ns-h2">3着内に入った割合</h2><div class="ns-stats">
-  <div class="ns-stat"><span>FINAL上位3頭</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}レース・候補1頭ごと</small></div>
+  <div class="ns-stat"><span>最終候補3頭</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}レース・候補1頭ごと</small></div>
   <div class="ns-stat base"><span>人気上位3頭</span><b>${rate(rf.pick_rate)}</b><small>同じレースでの基準</small></div>
   <div class="ns-stat"><span>1頭以上が3着内</span><b>${rate(rp.race_hit_rate)}</b><small>人気上位3頭は ${rate(rf.race_hit_rate)}</small></div>
   <div class="ns-stat"><span>1位候補が3着内</span><b>${rate(rp.top1_place_rate)}</b><small>3頭とも3着内 ${rate(rp.perfect3_rate)}</small></div></div>
@@ -997,7 +997,7 @@ function roiCell(v){if(!v||v.roi==null)return '<td>—</td>';const ci=v.ci95?`${
 async function roiLoad(){try{
   const x=await(await fetch('/api/roi',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
   $('roi').innerHTML=`<section class="ns-block"><h2 class="ns-h2">回収率（公式の払戻金）</h2><p class="ns-note">${x.races||0}レース、1点100円で計算。100%以上が緑。下の段は95%の範囲で、100%をまたぐ間は偶然と区別できません。</p>
-  <table class="ns-tbl"><thead><tr><th>買い方（3頭）</th><th>FINAL上位3</th><th>人気上位3</th></tr></thead><tbody>${(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('')}</tbody></table></section>
+  <table class="ns-tbl"><thead><tr><th>買い方（3頭）</th><th>最終候補3頭</th><th>人気上位3頭</th></tr></thead><tbody>${(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('')}</tbody></table></section>
   <section class="ns-block"><h2 class="ns-h2">締切直前の売れ方</h2><p class="ns-note">3分前から確定までに単勝オッズがどう動いた馬が走ったか（${x.late_money_races||0}レース・${x.late_money_horses||0}頭）。人気の差も含むため、傾向の確認用です。</p>
   <table class="ns-tbl"><thead><tr><th>動き</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(x.late_money||[]).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.horses||0}</td><td>${rate(b.place_rate)}</td><td><b class="${(b.place_roi||0)>=1?'up':'down'}">${rate(b.place_roi)}</b></td></tr>`).join('')}</tbody></table>
   <p class="ns-note">急に売れた＝確定オッズが3分前より20%以上下がった馬。</p></section>`;
@@ -1008,7 +1008,27 @@ async function refreshHeaderData(){
   try{await Promise.all([NS.route.startsWith('race/')&&cur?show(cur,true):nsRoute(),...(NS.route==='record'?[learn(),roiLoad()]:[])])}catch(e){}
   finally{refreshBusy=false;setTimeout(()=>b.classList.remove('spin'),400)}
 }
+
+// 詳細画面の表示文字だけを日本語にする（判定ロジックの英語キーには触れない）
+const NS_JA=[['SIGNAL LEVEL','シグナルの強さ'],['LOW SIGNAL','弱いシグナル'],['PRIME SIGNAL','最強シグナル'],['STRONG SIGNAL','有力シグナル'],['SELECT SIGNAL','候補シグナル'],['WATCH SIGNAL','注目シグナル'],
+ ['RESULT GUARD','結果による抑制'],['DATA WAIT','データ待ち'],['FINAL READY','最終確定'],['LIVE SCOPE','レース'],['LEGACY DATA','旧形式のデータ'],['LEGACY MARKET','旧形式の市場'],['OFFICIAL DATA','公式データ'],['NOT LIVE','実況ではありません'],
+ ['ODDS DNA','オッズDNA'],['RACE FLOW','展開'],['LATE UPDATE','直前更新'],['MIN FINAL','分前 最終'],['S PRIME','S 最強'],['A STRONG','A 有力'],['B SELECT','B 候補'],['C WATCH','C 注目'],['D LOW','D 弱'],
+ ['CANDIDATE','候補'],['SHORTLIST','絞り込み'],['FINAL','最終'],['BASE','基準'],['COLLECTING','集計中'],['PASS','良好'],['HOLD','様子見'],['REVIEW','見直し'],['WAIT','待機'],
+ ['SCOPE','総合'],['ACCEL','加速'],['ISOLATION','孤立'],['FLOAT','浮き'],['CROSS','一致'],['POTUN','ポツン'],['GAP','断層'],['FLOW','流れ'],['EDGE','優位'],['VALUE','妙味'],
+ ['STEP','段階'],['START','スタート'],['STRETCH','直線'],['BACK','向正面'],['FINISH','ゴール'],['PACE','ペース'],['PREDICTED','予想'],['STATUS','状態'],['SIGNAL','シグナル'],['WHY','根拠'],['PRIME','最強'],['STRONG','有力'],['SELECT','候補'],['WATCH','注目'],['NAR','地方']
+].map(([en,ja])=>[new RegExp('(^|[^A-Za-z])'+en.replace(/ /g,'\\s+')+'(?![A-Za-z])','g'),'$1'+ja]);
+function nsJaText(t){if(!/[A-Z]{3}/.test(t))return t;let u=t;for(const [re,ja] of NS_JA)u=u.replace(re,ja);return u}
+function nsJa(root){
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let n;
+  while((n=w.nextNode())){const p=n.parentNode;if(!p||p.closest('script,style,svg,canvas'))continue;const u=nsJaText(n.nodeValue);if(u!==n.nodeValue)n.nodeValue=u}
+}
 // ---- boot ----
+(function(){const d=document.getElementById('detail');if(!d||typeof MutationObserver!=='function')return;nsJa(d);
+  // Translate only what changed, so the 3D replay's per-frame updates stay cheap.
+  new MutationObserver(recs=>{for(const r of recs){
+    if(r.type==='characterData'){const n=r.target,u=nsJaText(n.nodeValue);if(u!==n.nodeValue)n.nodeValue=u}
+    else for(const a of r.addedNodes){if(a.nodeType===3){const u=nsJaText(a.nodeValue);if(u!==a.nodeValue)a.nodeValue=u}else if(a.nodeType===1&&!a.closest('script,style,svg,canvas'))nsJa(a)}
+  }}).observe(d,{childList:true,subtree:true,characterData:true})})();
 $('nsBack').addEventListener('click',e=>{e.preventDefault();location.hash=NS.back||'#/'});
 $('nsCancel').addEventListener('click',()=>cancelR(cur));
 window.addEventListener('hashchange',nsRoute);

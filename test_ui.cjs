@@ -59,9 +59,15 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  ctx.cur='raceA';ctx.fetch=async()=>({ok:true,status:200,json:async()=>({ok:false,error:'予約が見つかりません'})});
  await ctx.cancelR('raceA');assert.equal(ctx.cur,'raceA');
 
- // 6. Stale detail responses are not rendered after switching race.
+ // 6. Race-page labels are shown in Japanese; logic keys are untouched.
+ const J=ctx.nsJaText;
+ assert.equal(J('10分前CANDIDATE待ち'),'10分前候補待ち');assert.equal(J('S PRIME'),'S 最強');assert.equal(J('FINAL順'),'最終順');
+ assert.equal(J('LATE UPDATE'),'直前更新');assert.equal(J('SIGNAL LEVEL'),'シグナルの強さ');assert.equal(J('3MIN FINAL'),'3分前 最終');
+ assert.equal(J('RESULT GUARD COLLECTING'),'結果による抑制 集計中');assert.equal(J('GAP · ISOLATION · POTUN'),'断層 · 孤立 · ポツン');
+ assert.equal(J('ODDS DNA'),'オッズDNA');assert.equal(J('馬番 7'),'馬番 7');
+ // 7. Stale detail responses are not rendered after switching race.
  vm.runInContext(extract('async function show(k,silent=false)','document.addEventListener'),ctx);
  let resolveFetch;ctx.fetch=()=>new Promise(resolve=>resolveFetch=resolve);
  ctx.cur='raceA';let pending=ctx.show('raceA',true);ctx.cur='raceB';resolveFetch({ok:true,json:async()=>({race:{race_key:'raceA'}})});await pending;
- console.log('PASS: day error, failed cancellation, venue grouping and board, past days, confirmed cancellation, stale detail response');
+ console.log('PASS: day error, failed cancellation, venue grouping and board, past days, confirmed cancellation, Japanese labels, stale detail response');
 })().catch(e=>{console.error(e);process.exit(1)});
