@@ -1167,10 +1167,19 @@ def _capture_race(r):
     ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
     (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
    log(r["race_key"],slot,"OK",f'start={(post_time-capture_started).total_seconds()/60:.2f}m counts={data.get("counts")}',ms)
+   # Prediction generation must not occupy a scarce odds-capture worker.
+   # The odds snapshot is committed first; prediction errors are logged independently.
    if slot in (10,5,4,3):
-    try:save_predictions(r["race_key"],slot)
-    except Exception as e:
-     ev.append(f"ERR predict {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}");log(r["race_key"],slot,"ERR_PREDICT",f"{type(e).__name__}: {e}")
+    def _predict_after_capture(race_key, captured_slot):
+     try:
+      _leased_work("predict:"+race_key+":"+str(captured_slot),
+                   lambda:save_predictions(race_key,captured_slot))
+     except Exception as exc:
+      _write_capture_log([(datetime.now(JST).isoformat(),race_key,captured_slot,
+                           "ERR_PREDICT",f"{type(exc).__name__}: {exc}"[:500],
+                           None,os.getpid())])
+    threading.Thread(target=_predict_after_capture,args=(r["race_key"],slot),
+                     daemon=True,name="odds-predict").start()
   except Exception as e:
    ev.append(f"ERR snapshot {r['race_key']}:{slot} {type(e).__name__}: {str(e)[:180]}")
    log(r["race_key"],slot,"ERR",f"{type(e).__name__}: {e}",int((datetime.now(JST)-capture_started).total_seconds()*1000))
