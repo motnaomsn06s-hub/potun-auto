@@ -9,12 +9,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Screenshot at iPhone width
         run: |
+          pip install -q pillow
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)
+          if [ -z "$B" ]; then npx -y playwright@1 install chromium >/dev/null 2>&1; B=$(ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome | head -1); fi
+          echo "browser=$B"
           python3 scripts_stub_server.py & sleep 2
-          google-chrome --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=2 --window-size=390,1500 --virtual-time-budget=6000 --screenshot=/tmp/full.png http://127.0.0.1:8765/
-          convert /tmp/full.png -resize 50% -quality 55 /tmp/shot.jpg
-          ls -la /tmp/shot.jpg
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=2 --window-size=390,1500 --virtual-time-budget=6000 --screenshot=/tmp/full.png http://127.0.0.1:8765/
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im=im.resize((im.width//2,im.height//2));im.save('/tmp/shot.jpg',quality=55)"
           python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN',len(b),(len(b)+3899)//3900)"
-
       - name: chunks 0
         run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
       - name: chunks 1
