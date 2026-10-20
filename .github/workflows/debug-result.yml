@@ -2,7 +2,7 @@ name: debug-result-page
 on:
   push:
     branches: ['debug/**']
-jobs:jobs:
+jobs:
   today:
     runs-on: ubuntu-latest
     steps:
@@ -35,7 +35,7 @@ jobs:jobs:
           B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
           python3 scripts_stub_server.py & sleep 2
           curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1400 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/past"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1300 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/past"
           python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
           python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN past',len(b),(len(b)+3899)//3900)"
 
