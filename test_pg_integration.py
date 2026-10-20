@@ -30,8 +30,8 @@ class PostgresIntegration(unittest.TestCase):
 
     def test_capture_health_on_real_schema(self):
         a = self.app
-        day = '2099-01-02'
-        post = datetime(2099, 1, 2, 13, 50, tzinfo=a.JST)
+        day = '2001-01-02'  # in the past, so windows are closed
+        post = datetime(2001, 1, 2, 13, 50, tzinfo=a.JST)
         key = f'{day}:18:4'
         self.sql("INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,%s,'18','浦和',4,%s,'reserved',%s,0)",
                  (key, day, post.isoformat(), (post - timedelta(hours=8)).isoformat()))
