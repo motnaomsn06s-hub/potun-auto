@@ -64,7 +64,13 @@ def parse_race_list(doc):
             cancelled = any(w in c for c in cells for w in CANCEL_WORDS)
             chg = header.index("変更") if "変更" in header else None
             name_i = next((i for i, h in enumerate(header) if h.startswith("競走名")), None)
+            course_i = header.index("コース") if "コース" in header else None
+            field_i = header.index("頭数") if "頭数" in header else None
+            course = cells[course_i] if course_i is not None and course_i < len(cells) else ""
+            fm = re.fullmatch(r"(\d{1,2})", cells[field_i]) if field_i is not None and field_i < len(cells) else None
             out[int(m.group(1))] = {
+                "course": course,
+                "field": int(fm.group(1)) if fm else None,
                 "race": int(m.group(1)),
                 "time": f"{int(tm.group(1)):02d}:{tm.group(2)}" if tm else None,
                 "changed": bool(chg is not None and chg < len(cells) and cells[chg]),
