@@ -1,0 +1,27 @@
+name: debug-result-page
+on:
+  push:
+    branches: ['debug/**']
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install beautifulsoup4 requests
+      - shell: python
+        run: |
+          import requests, re
+          from bs4 import BeautifulSoup
+          u = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceMarkTable"
+          for race in (5, 4):
+              r = requests.get(u, params={"k_babaCode": "18", "k_raceDate": "2026/10/20", "k_raceNo": race},
+                               headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}, timeout=30)
+              r.encoding = r.apparent_encoding
+              s = BeautifulSoup(r.text, "html.parser")
+              out = [f"race {race} status={r.status_code} tables={len(s.find_all('table'))}"]
+              for ti, t in enumerate(s.find_all("table")):
+                  for tr in t.find_all("tr")[:8]:
+                      cells = [" ".join(x.stripped_strings) for x in tr.find_all(["td", "th"])]
+                      attrs = [x.get("rowspan") or x.get("colspan") or "" for x in tr.find_all(["td", "th"])]
+                      out.append(f"T{ti} {cells[:9]} span={attrs[:9]}")
+              msg = "\n".join(out)[:60000].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print("::notice::" + msg)
