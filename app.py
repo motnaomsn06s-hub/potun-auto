@@ -1111,12 +1111,32 @@ def model_score(x,state=None):
  except:return None
 
 
-def parse_result(s):
- rows=[]
+def parse_result_places(s):
+ """Official finishing order as [(place,horse),...] for every horse placed 1-3, in table order.
+ Dead heats are kept as published: 2着同着 gives places 1,2,2 (no 3着 exists)."""
+ rows=[];seen=set()
  for tr in s.find_all("tr"):
   cells=[" ".join(x.stripped_strings) for x in tr.find_all(["td","th"])];nums=[int(x) for x in cells if re.fullmatch(r"\d{1,2}",x or "")]
-  if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18:rows.append((nums[0],nums[2]))
- d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
+  if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18 and nums[2] not in seen:
+   rows.append((nums[0],nums[2]));seen.add(nums[2])
+ return rows
+def result_complete(places):
+ """Complete when the top three finishing positions are fully covered, including dead heats."""
+ ps=sorted(p for p,_ in places)
+ if len(ps)<3:return False
+ # Standard competition ranking: a horse placed p has exactly p-1 horses ahead of it.
+ return all(sum(q<p for q in ps)==p-1 for p in set(ps))
+def parse_result(s):
+ """[1st,2nd,3rd] horses in finishing order. With a dead heat, the tied horses fill the
+ following columns (2着同着 2,9 -> [winner,2,9]); exact places are stored in the payload."""
+ places=parse_result_places(s)
+ if not result_complete(places):
+  d={};[d.setdefault(p,h) for p,h in places];return [d.get(1),d.get(2),d.get(3)]
+ return [h for _,h in places][:3]
+def parse_result_from_places(places):
+ d={};[d.setdefault(p,h) for p,h in places];return [d.get(1),d.get(2),d.get(3)]
+def _result_payload(places):
+ return json.dumps({"order":[h for _,h in places],"places":[p for p,_ in places],"dead_heat":len({p for p,_ in places})<len(places)})
 _RESULT_RETRY={}
 _PROFILE_RETRY={}
 LEARNING_REQUIRED_SLOTS=(15,10,5,3)  # final_features() needs these; 4 is optional
@@ -1234,7 +1254,7 @@ def due(capture=True,maintenance=True,async_capture=False):
   if maintenance and not busy:
    try:
     c=con()
-    missing=c.execute("""SELECT r.race_key, x.first_horse, x.second_horse, x.third_horse
+    missing=c.execute("""SELECT r.race_key, x.first_horse, x.second_horse, x.third_horse, x.payload
       FROM races r JOIN results x ON x.race_key=r.race_key
       WHERE r.status='complete' AND NOT EXISTS
         (SELECT 1 FROM learning_samples l WHERE l.race_key=r.race_key)
@@ -1244,7 +1264,12 @@ def due(capture=True,maintenance=True,async_capture=False):
     c.close()
     repaired=0
     for item in missing:
-     n=store_learning_samples(item["race_key"],[item["first_horse"],item["second_horse"],item["third_horse"]])
+     top=[item["first_horse"],item["second_horse"],item["third_horse"]]
+     try:
+      pl=json.loads(item.get("payload") or "null")
+      if isinstance(pl,dict) and pl.get("order"):top=[int(h) for h in pl["order"]]
+     except Exception:pass
+     n=store_learning_samples(item["race_key"],top)
      if n:
       repaired+=1
       log(item["race_key"],None,"LEARNING_REPAIRED",f"samples={n}")
@@ -1266,16 +1291,19 @@ def due(capture=True,maintenance=True,async_capture=False):
     if last_try and now2-last_try<timedelta(minutes=5):continue
     _RESULT_RETRY[r["race_key"]]=now2;attempts+=1
     try:
-     rs=parse_result(soup("RaceMarkTable",qfor(r)))
-     if all(rs):
-      c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
-      n=store_learning_samples(r["race_key"],rs);tr=maybe_train() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
+     places=parse_result_places(soup("RaceMarkTable",qfor(r)))
+     rs=[h for _,h in places][:3] if result_complete(places) else parse_result_from_places(places)
+     if result_complete(places):
+      c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),_result_payload(places)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
+      # Label every horse placed 1-3 (a 3着同着 can give four in-the-money horses).
+      n=store_learning_samples(r["race_key"],[h for _,h in places]);tr=maybe_train() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
       why=""
       if not n:
        try:why=f" missing_slots={_missing_learning_slots(r['race_key'])}"
        except Exception:why=""
-      log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}{why}")
-     else:log(r["race_key"],None,"RESULT_PENDING",str(rs))
+      dh=" dead_heat places="+str([p for p,_ in places]) if len({p for p,_ in places})<len(places) else ""
+      log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}{why}{dh}")
+     else:log(r["race_key"],None,"RESULT_PENDING",f"{rs} places={places}")
     except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
  finally:
   if watch:log(None,None,"TICK"," ".join(watch))
@@ -1678,6 +1706,10 @@ def status():
   result_eval=None
   if result:
    places={result["first_horse"]:1,result["second_horse"]:2,result["third_horse"]:3}
+   try:
+    pl=json.loads(result.get("payload") or "null")
+    if isinstance(pl,dict) and pl.get("order"):places={int(h):int(p) for h,p in zip(pl["order"],pl["places"])}
+   except Exception:pass
    for p in pp:p["finish"]=places.get(p["horse"],0)
    delivered=sorted(pp,key=lambda z:int(z.get("rank") or 99))[:3]
    hits=[int(z["horse"]) for z in delivered if int(z["horse"]) in places]
@@ -1762,10 +1794,11 @@ def repair_result():
  try:
   key=request.get_json(force=True)["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone();c.close()
   if not r:return jsonify(ok=False,error="race not found"),404
-  rs=parse_result(soup("RaceMarkTable",qfor(r)))
-  if not all(rs):return jsonify(ok=False,error="official result not available"),409
-  now=datetime.now(JST);c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(key,*rs,now.isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(key,));c.commit();c.close()
-  store_learning_samples(key,rs);train=maybe_train()
+  places=parse_result_places(soup("RaceMarkTable",qfor(r)))
+  if not result_complete(places):return jsonify(ok=False,error="official result not available",places=places),409
+  rs=[h for _,h in places][:3]
+  now=datetime.now(JST);c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(key,*rs,now.isoformat(),_result_payload(places)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(key,));c.commit();c.close()
+  store_learning_samples(key,[h for _,h in places]);train=maybe_train()
   return jsonify(ok=True,result=rs,training=train)
  except Exception as e:return jsonify(ok=False,error=str(e)),500
 
