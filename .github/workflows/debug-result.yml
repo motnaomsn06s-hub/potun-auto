@@ -6,37 +6,22 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
-      - run: pip install beautifulsoup4 requests
       - shell: python
         run: |
-          import requests, re
-          from bs4 import BeautifulSoup
-          B = "https://www.keiba.go.jp/KeibaWeb/"
-          H = {"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}
-          targets = [
-            ("TodayRaceInfo/TodayRaceInfoTop", {}),
-            ("TodayRaceInfo/RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "18"}),
-            ("TodayRaceInfo/RaceList", {"k_raceDate": "2026/10/21", "k_babaCode": "20"}),
-            ("TodayRaceInfo/OddsTanFuku", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
-            ("MonthlyConveneInfo/MonthlyConveneInfoTop", {"k_year": "2026", "k_month": "10"}),
-          ]
-          for path, q in targets:
-              out = []
-              try:
-                  r = requests.get(B + path, params=q, headers=H, timeout=30)
-                  r.encoding = r.apparent_encoding
-                  s = BeautifulSoup(r.text, "html.parser")
-                  out.append(f"{path} {q} status={r.status_code} url={r.url} title={s.title.string if s.title else ''} tables={len(s.find_all('table'))} bytes={len(r.content)}")
-                  links = sorted({a.get('href') for a in s.find_all('a') if a.get('href') and re.search(r'RaceList|DebaTable|babaCode', a.get('href'))})
-                  out += ["L " + l for l in links[:40]]
-                  for ti, t in enumerate(s.find_all("table")[:4]):
-                      for tr in t.find_all("tr")[:14]:
-                          cells = [re.sub(r"\s+", " ", " ".join(x.stripped_strings)) for x in tr.find_all(["td", "th"])]
-                          out.append(f"T{ti} {cells[:10]}")
-                  txt = re.sub(r"\s+", " ", s.get_text(" "))
-                  m = re.search(r"(確定|最終|締切|発売).{0,80}", txt)
-                  out.append("TXT " + (m.group(0) if m else txt[:300]))
-              except Exception as e:
-                  out.append(f"{path} ERROR {e}")
-              msg = "\n".join(out)[:60000].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
-              print("::notice::" + msg)
+          import urllib.request, urllib.parse, gzip, base64
+          B = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
+          pages = {
+            "top": ("TodayRaceInfoTop", {}),
+            "racelist_urawa": ("RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "18"}),
+            "racelist_morioka": ("RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "10"}),
+            "result_urawa5": ("RaceMarkTable", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
+            "result_urawa4": ("RaceMarkTable", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "4"}),
+            "odds_urawa5_final": ("OddsTanFuku", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
+          }
+          for name, (path, q) in pages.items():
+              url = B + path + ("?" + urllib.parse.urlencode(q) if q else "")
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"})
+              raw = urllib.request.urlopen(req, timeout=30).read()
+              b = base64.b64encode(gzip.compress(raw, 9)).decode()
+              for i in range(0, len(b), 50000):
+                  print(f"::notice::FIX {name} {i//50000} {b[i:i+50000]}")
