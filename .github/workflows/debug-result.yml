@@ -6,22 +6,106 @@ jobs:
   dump:
     runs-on: ubuntu-latest
     steps:
-      - shell: python
+      - run: pip install beautifulsoup4
+      - name: top
+        shell: python
         run: |
           import urllib.request, urllib.parse, gzip, base64
-          B = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
-          pages = {
-            "top": ("TodayRaceInfoTop", {}),
-            "racelist_urawa": ("RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "18"}),
-            "racelist_morioka": ("RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "10"}),
-            "result_urawa5": ("RaceMarkTable", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
-            "result_urawa4": ("RaceMarkTable", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "4"}),
-            "odds_urawa5_final": ("OddsTanFuku", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
-          }
-          for name, (path, q) in pages.items():
-              url = B + path + ("?" + urllib.parse.urlencode(q) if q else "")
-              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"})
-              raw = urllib.request.urlopen(req, timeout=30).read()
-              b = base64.b64encode(gzip.compress(raw, 9)).decode()
-              for i in range(0, len(b), 50000):
-                  print(f"::notice::FIX {name} {i//50000} {b[i:i+50000]}")
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/TodayRaceInfoTop" + ("?" + urllib.parse.urlencode({}) if {} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN top {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX top {i//n} {b[i:i+n]}")
+      - name: racelist_urawa
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, gzip, base64
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceList" + ("?" + urllib.parse.urlencode({'k_raceDate': '2026/10/20', 'k_babaCode': '18'}) if {'k_raceDate': '2026/10/20', 'k_babaCode': '18'} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN racelist_urawa {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX racelist_urawa {i//n} {b[i:i+n]}")
+      - name: racelist_morioka
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, gzip, base64
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceList" + ("?" + urllib.parse.urlencode({'k_raceDate': '2026/10/20', 'k_babaCode': '10'}) if {'k_raceDate': '2026/10/20', 'k_babaCode': '10'} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN racelist_morioka {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX racelist_morioka {i//n} {b[i:i+n]}")
+      - name: result_urawa5
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, gzip, base64
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceMarkTable" + ("?" + urllib.parse.urlencode({'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '5'}) if {'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '5'} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN result_urawa5 {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX result_urawa5 {i//n} {b[i:i+n]}")
+      - name: result_urawa4
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, gzip, base64
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceMarkTable" + ("?" + urllib.parse.urlencode({'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '4'}) if {'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '4'} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN result_urawa4 {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX result_urawa4 {i//n} {b[i:i+n]}")
+      - name: odds_urawa5_final
+        shell: python
+        run: |
+          import urllib.request, urllib.parse, gzip, base64
+          from bs4 import BeautifulSoup
+          url = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/OddsTanFuku" + ("?" + urllib.parse.urlencode({'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '5'}) if {'k_raceDate': '2026/10/20', 'k_babaCode': '18', 'k_raceNo': '5'} else "")
+          raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}), timeout=30).read()
+          s = BeautifulSoup(raw, "html.parser")
+          for t in s(["script", "style", "img", "noscript", "iframe"]): t.decompose()
+          keep = "<html><head><meta charset='utf-8'><title>" + (s.title.string if s.title else "") + "</title></head><body>"
+          keep += "".join(str(a) for a in s.find_all("a") if "RaceList" in (a.get("href") or ""))
+          keep += "".join(str(t) for t in s.find_all("table") if not t.find_parent("table")) + "</body></html>"
+          b = base64.b64encode(gzip.compress(keep.encode("utf-8"), 9)).decode()
+          n = 3900
+          print(f"::notice::LEN odds_urawa5_final {len(b)} {(len(b)+n-1)//n}")
+          for i in range(0, len(b), n):
+              print(f"::notice::FIX odds_urawa5_final {i//n} {b[i:i+n]}")
