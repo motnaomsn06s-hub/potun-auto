@@ -8,6 +8,7 @@ from datetime import datetime,timezone,timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading,random
 import roi as roi_eval
+import favorite_audit
 from nar_pages import (parse_venue_days,parse_race_list,parse_payouts,parse_win_place,parse_today_grid,
                        cancelled_races,stored_baba,VENUE_NAMES)
 
@@ -1902,6 +1903,41 @@ def compute_roi():
  out.update(results_with_payouts=len(res),late_money=roi_eval.late_money(late),late_money_horses=len(late),
             late_money_races=len({k for k in finals if k in res}),computed_at=datetime.now(JST).isoformat())
  return out
+def favorite_audit_rows():
+ """3分前の単勝が2.0倍未満だった馬を、結果確定済みの全レースから集める（読み取りのみ）。"""
+ c=con()
+ try:
+  res={x["race_key"]:x for x in c.execute("SELECT race_key,first_horse,second_horse,third_horse,payload FROM results").fetchall()}
+  keys=list(res);snaps={}
+  if keys:
+   for x in c.execute("SELECT race_key,slot,payload FROM snapshots WHERE race_key = ANY(%s) AND slot IN (3,15)",(keys,)).fetchall():
+    try:p=json.loads(x["payload"])
+    except Exception:continue
+    if valid_payload(p):snaps.setdefault(x["race_key"],{})[int(x["slot"])]={int(r["horse"]):r for r in p.get("rows",[])}
+ finally:c.close()
+ rows=[]
+ for k,s3 in ((k,v.get(3)) for k,v in snaps.items()):
+  if not s3:continue
+  fav=min(s3.values(),key=lambda r:float(r.get("odds") or 999))
+  if float(fav.get("odds") or 999)>=favorite_audit.HEAVY:continue
+  h=int(fav["horse"]);x=res[k];top={x["first_horse"],x["second_horse"],x["third_horse"]};place_yen=None
+  try:
+   pl=json.loads(x["payload"] or "null")
+   if isinstance(pl,dict):
+    if pl.get("order") and pl.get("places"):top={int(a) for a,b in zip(pl["order"],pl["places"]) if int(b)<=3}
+    if pl.get("payouts",{}).get("複勝"):place_yen={int(e["combo"][0]):int(e["yen"]) for e in pl["payouts"]["複勝"]}.get(h,0)
+  except Exception:pass
+  f15=(snaps[k].get(15) or {}).get(h) or {}
+  rows.append({"race_key":k,"horse":h,"odds3":float(fav["odds"]),"odds15":float(f15["odds"]) if f15.get("odds") else None,
+               "base3":float(fav.get("base") or 0.0),"placed":h in top,"place_yen":place_yen})
+ return rows
+@app.route("/api/favorite-audit")
+def favorite_audit_api():
+ try:
+  rows=favorite_audit_rows();out=favorite_audit.audit(rows)
+  out["examples"]=[{**r,"verdict":favorite_audit.signals(r)[0],"reasons":favorite_audit.signals(r)[1]} for r in sorted(rows,key=lambda z:z["race_key"],reverse=True)[:40]]
+  return jsonify(ok=True,**out)
+ except Exception as e:return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/roi")
 def roi_api():
  try:
