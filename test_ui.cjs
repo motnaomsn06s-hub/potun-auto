@@ -59,6 +59,9 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  ctx.cur='raceA';ctx.fetch=async()=>({ok:true,status:200,json:async()=>({ok:false,error:'予約が見つかりません'})});
  await ctx.cancelR('raceA');assert.equal(ctx.cur,'raceA');
 
+ // 5b. Heavy-favourite verdict shows as a badge on the row.
+ const withFav=races.map(r=>r.race_key==='b2'?Object.assign({},r,{fav:{horse:4,odds:1.4,verdict:'危険'}}):r);
+ assert(ctx.nsDayHTML('2026-10-20',withFav,now).includes('<span class="ns-fav 危険">本命4番 危険</span>'));
  // 6. Race-page labels are shown in Japanese; logic keys are untouched.
  const J=ctx.nsJaText;
  assert.equal(J('10分前CANDIDATE待ち'),'10分前候補待ち');assert.equal(J('S PRIME'),'S 最強');assert.equal(J('FINAL順'),'最終順');
