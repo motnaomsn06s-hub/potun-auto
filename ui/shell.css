@@ -170,3 +170,33 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 @media (prefers-reduced-motion:no-preference){.ns-skel{animation:ns-sk 1.4s linear infinite}}
 @keyframes ns-sk{to{background-position:-200% 0}}
 @media (min-width:700px){.ns-stats{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* ---------- レース画面：読みやすさと色の統一（既存部品の上書き） ---------- */
+#detail{--mono:"Barlow Condensed","Zen Kaku Gothic New","Hiragino Sans",sans-serif;--cyan:#8FC3E8;--blue:#8FB4E0}
+#detail h2{font-size:19px;font-weight:700;letter-spacing:.05em;text-transform:none}
+#detail .sectionKicker,#detail .muted{font-size:12px;color:var(--ns-mute)}
+#detail .phaseRail:before{background:linear-gradient(90deg,var(--ns-line-2),var(--ns-sand-lo) 70%,var(--ns-sand))}
+#detail .phaseNode span{font-size:11px;color:var(--ns-mute)}
+#detail .phaseNode b{font-size:11px}
+#detail .phaseNode small{font-size:10px;color:var(--ns-faint)}
+#detail .phaseNode.done .phaseDot{border-color:var(--ns-sand-lo);background:#2A2213;color:var(--ns-ink);box-shadow:none}
+#detail .phaseNode.done b{color:var(--ns-sand)}
+#detail .phaseNode.active .phaseDot{border-color:var(--ns-sand-hi);background:#3A2E14;color:#FFF6DF;box-shadow:0 0 16px rgba(240,212,154,.35)}
+#detail .phaseNode.active b{color:var(--ns-sand-hi)}
+#detail .snap{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .snap span{font-size:11px;color:var(--ns-mute)}
+#detail .snap b{font-size:12px;font-weight:600}
+#detail .snap.ok{border-color:var(--ns-sand);background:#211A0E}
+#detail .snap.ok b{color:var(--ns-sand-hi)}
+#detail .stageStatusItem{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .stageStatusItem span{font-size:10.5px;letter-spacing:.06em;color:var(--ns-faint)}
+#detail .stageStatusItem small{font-size:10.5px;color:var(--ns-mute)}
+#detail .stageStatusItem.done{border-color:var(--ns-sand-lo);background:#1A150C}
+#detail .raceSignal{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .raceSignal span{font-size:11px;letter-spacing:.04em}
+#detail .raceSignal small{font-size:11.5px}
+#detail .guardBar{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .guardBar small{font-size:11.5px}
+#detail .phasePill{background:var(--ns-night);border-color:var(--ns-line-2);font-size:12px}
+#detail .countBox span{font-size:11px;color:var(--ns-mute)}
+#detail details>summary{min-height:44px;display:flex;align-items:center;font-size:14px;color:var(--ns-mute)}

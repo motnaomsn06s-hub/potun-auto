@@ -29,7 +29,7 @@ function nsBoard(races,now,isToday){
   const ts=live.map(r=>new Date(r.start_iso).getTime()),t0=Math.min(...ts)-20*60000,t1=Math.max(...ts)+10*60000;
   const X=t=>((t-t0)/(t1-t0)*100).toFixed(2)+'%';
   const next=isToday?nsNext(races,now):null,venues=nsVenues(races);
-  const ticks=[];const h0=new Date(t0);h0.setMinutes(0,0,0);for(let t=h0.getTime()+3600000;t<t1;t+=3600000){const d=new Date(t);if(d.getHours()%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${d.getHours()}時</span>`)}
+  const ticks=[];for(let t=Math.floor(t0/3600000)*3600000+3600000;t<t1;t+=3600000){const hr=(new Date(t).getUTCHours()+9)%24;if(hr%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${hr}時</span>`)}
   const lanes=venues.map(v=>`<div class="ns-lane"><span class="ns-lane-name">${esc(v)}</span>${races.filter(r=>r.baba_name===v).map(r=>{
     const t=new Date(r.start_iso).getTime(),done=nsFinished(r,now);
     const cls=r.status==='cancelled'?'off':next&&r.race_key===next.race_key?'next':done?((r.slots||[]).length===5?'full':'done'):'';
