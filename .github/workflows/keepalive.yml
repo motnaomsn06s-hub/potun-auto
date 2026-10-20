@@ -1,0 +1,25 @@
+# Render Free stops the web service after 15 minutes without inbound HTTP, which stops the
+# in-process 15-second capture scheduler. This job keeps it awake during NAR race hours
+# (08:00-22:00 JST) and fails (=> GitHub e-mail) when captures are missed for scheduler reasons.
+name: keepalive
+on:
+  schedule:
+    # Every 20 minutes between 08:00 and 21:40 JST (23:00-12:40 UTC). Only one run is active at a
+    # time; a delayed or dropped trigger is covered because each run lasts several hours.
+    - cron: '*/20 23,0-12 * * *'
+  workflow_dispatch:
+concurrency:
+  group: render-keepalive
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - name: Keep service awake and audit captures
+        run: python3 -u scripts/keepalive.py

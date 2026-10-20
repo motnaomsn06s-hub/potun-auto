@@ -18,3 +18,8 @@ def capture_still_valid(slot, started_at, finished_at, post_time):
     return (finished_at >= started_at and
             capture_slot((post_time - started_at).total_seconds() / 60) == slot and
             capture_slot((post_time - finished_at).total_seconds() / 60) == slot)
+
+
+# Diagnostic view of the same windows (minutes before post time, low..high).
+# capture_slot() above remains the single source of truth for capturing.
+SLOT_WINDOWS = {15: (13.75, 15.72), 10: (8.90, 11.20), 5: (4.60, 6.20), 4: (3.60, 4.60), 3: (1.85, 3.60)}

@@ -6,14 +6,37 @@ from unittest.mock import Mock, patch
 from capture_timing import capture_slot, capture_still_valid
 
 
+def _ensure_psycopg_importable():
+    # Unit tests mock every database call. Where the driver is not installed (offline sandboxes),
+    # a stand-in module lets app.py import; CI installs the real driver and also runs test_pg_integration.
+    try:
+        import psycopg  # noqa: F401
+    except ImportError:
+        import sys, types
+        mod = types.ModuleType('psycopg'); rows = types.ModuleType('psycopg.rows')
+        rows.dict_row = object(); mod.rows = rows
+        def connect(*a, **k):
+            raise RuntimeError('psycopg not installed')
+        mod.connect = connect
+        sys.modules['psycopg'] = mod; sys.modules['psycopg.rows'] = rows
+
+
 def load_app_without_database():
+    _ensure_psycopg_importable()
     tree = ast.parse(Path(__file__).with_name('app.py').read_text())
     # Skip only the production schema initialization; routes/functions are unchanged.
     tree.body = [node for node in tree.body if not (
         isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name) and node.value.func.id == 'init')]
+        and isinstance(node.value.func, ast.Name) and node.value.func.id in ('init', 'ensure_auto_loop'))]
     namespace = {'__name__': 'odds_test_app', '__file__': str(Path(__file__).with_name('app.py'))}
     exec(compile(tree, 'app.py', 'exec'), namespace)
+    # No background scheduler in unit tests: it would race with patched database mocks.
+    # Tests that exercise the loop reset _loop_state themselves.
+    class _Idle:
+        def is_alive(self):
+            return True
+    import os
+    namespace['_loop_state'].update(pid=os.getpid(), thread=_Idle())
     return namespace
 
 
