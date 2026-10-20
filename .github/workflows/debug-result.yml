@@ -11,17 +11,32 @@ jobs:
         run: |
           import requests, re
           from bs4 import BeautifulSoup
-          u = "https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/RaceMarkTable"
-          for race in (5, 4):
-              r = requests.get(u, params={"k_babaCode": "18", "k_raceDate": "2026/10/20", "k_raceNo": race},
-                               headers={"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}, timeout=30)
-              r.encoding = r.apparent_encoding
-              s = BeautifulSoup(r.text, "html.parser")
-              out = [f"race {race} status={r.status_code} tables={len(s.find_all('table'))}"]
-              for ti, t in enumerate(s.find_all("table")):
-                  for tr in t.find_all("tr")[:8]:
-                      cells = [" ".join(x.stripped_strings) for x in tr.find_all(["td", "th"])]
-                      attrs = [x.get("rowspan") or x.get("colspan") or "" for x in tr.find_all(["td", "th"])]
-                      out.append(f"T{ti} {cells[:9]} span={attrs[:9]}")
+          B = "https://www.keiba.go.jp/KeibaWeb/"
+          H = {"User-Agent": "Mozilla/5.0 (compatible; OddsScopeNAR/13.3)"}
+          targets = [
+            ("TodayRaceInfo/TodayRaceInfoTop", {}),
+            ("TodayRaceInfo/RaceList", {"k_raceDate": "2026/10/20", "k_babaCode": "18"}),
+            ("TodayRaceInfo/RaceList", {"k_raceDate": "2026/10/21", "k_babaCode": "20"}),
+            ("TodayRaceInfo/OddsTanFuku", {"k_raceDate": "2026/10/20", "k_babaCode": "18", "k_raceNo": "5"}),
+            ("MonthlyConveneInfo/MonthlyConveneInfoTop", {"k_year": "2026", "k_month": "10"}),
+          ]
+          for path, q in targets:
+              out = []
+              try:
+                  r = requests.get(B + path, params=q, headers=H, timeout=30)
+                  r.encoding = r.apparent_encoding
+                  s = BeautifulSoup(r.text, "html.parser")
+                  out.append(f"{path} {q} status={r.status_code} url={r.url} title={s.title.string if s.title else ''} tables={len(s.find_all('table'))} bytes={len(r.content)}")
+                  links = sorted({a.get('href') for a in s.find_all('a') if a.get('href') and re.search(r'RaceList|DebaTable|babaCode', a.get('href'))})
+                  out += ["L " + l for l in links[:40]]
+                  for ti, t in enumerate(s.find_all("table")[:4]):
+                      for tr in t.find_all("tr")[:14]:
+                          cells = [re.sub(r"\s+", " ", " ".join(x.stripped_strings)) for x in tr.find_all(["td", "th"])]
+                          out.append(f"T{ti} {cells[:10]}")
+                  txt = re.sub(r"\s+", " ", s.get_text(" "))
+                  m = re.search(r"(確定|最終|締切|発売).{0,80}", txt)
+                  out.append("TXT " + (m.group(0) if m else txt[:300]))
+              except Exception as e:
+                  out.append(f"{path} ERROR {e}")
               msg = "\n".join(out)[:60000].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print("::notice::" + msg)
