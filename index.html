@@ -458,6 +458,36 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 @media (prefers-reduced-motion:no-preference){.ns-skel{animation:ns-sk 1.4s linear infinite}}
 @keyframes ns-sk{to{background-position:-200% 0}}
 @media (min-width:700px){.ns-stats{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* ---------- レース画面：読みやすさと色の統一（既存部品の上書き） ---------- */
+#detail{--mono:"Barlow Condensed","Zen Kaku Gothic New","Hiragino Sans",sans-serif;--cyan:#8FC3E8;--blue:#8FB4E0}
+#detail h2{font-size:19px;font-weight:700;letter-spacing:.05em;text-transform:none}
+#detail .sectionKicker,#detail .muted{font-size:12px;color:var(--ns-mute)}
+#detail .phaseRail:before{background:linear-gradient(90deg,var(--ns-line-2),var(--ns-sand-lo) 70%,var(--ns-sand))}
+#detail .phaseNode span{font-size:11px;color:var(--ns-mute)}
+#detail .phaseNode b{font-size:11px}
+#detail .phaseNode small{font-size:10px;color:var(--ns-faint)}
+#detail .phaseNode.done .phaseDot{border-color:var(--ns-sand-lo);background:#2A2213;color:var(--ns-ink);box-shadow:none}
+#detail .phaseNode.done b{color:var(--ns-sand)}
+#detail .phaseNode.active .phaseDot{border-color:var(--ns-sand-hi);background:#3A2E14;color:#FFF6DF;box-shadow:0 0 16px rgba(240,212,154,.35)}
+#detail .phaseNode.active b{color:var(--ns-sand-hi)}
+#detail .snap{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .snap span{font-size:11px;color:var(--ns-mute)}
+#detail .snap b{font-size:12px;font-weight:600}
+#detail .snap.ok{border-color:var(--ns-sand);background:#211A0E}
+#detail .snap.ok b{color:var(--ns-sand-hi)}
+#detail .stageStatusItem{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .stageStatusItem span{font-size:10.5px;letter-spacing:.06em;color:var(--ns-faint)}
+#detail .stageStatusItem small{font-size:10.5px;color:var(--ns-mute)}
+#detail .stageStatusItem.done{border-color:var(--ns-sand-lo);background:#1A150C}
+#detail .raceSignal{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .raceSignal span{font-size:11px;letter-spacing:.04em}
+#detail .raceSignal small{font-size:11.5px}
+#detail .guardBar{background:var(--ns-night);border-color:var(--ns-line-2)}
+#detail .guardBar small{font-size:11.5px}
+#detail .phasePill{background:var(--ns-night);border-color:var(--ns-line-2);font-size:12px}
+#detail .countBox span{font-size:11px;color:var(--ns-mute)}
+#detail details>summary{min-height:44px;display:flex;align-items:center;font-size:14px;color:var(--ns-mute)}
 </style>
 </head>
 
@@ -525,7 +555,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
       </div>
     </section>
     <section class="panel pad signalPanel">
-      <div class="sectionTitle"><div><h2>TOP SIGNALS</h2><div class="sectionKicker">今、見るべき馬を段階的に絞り込み</div></div><small id="phaseLabel" class="phasePill">10分前 CANDIDATE待ち</small></div>
+      <div class="sectionTitle"><div><h2>注目馬</h2><div class="sectionKicker">今、見るべき馬を段階的に絞り込み</div></div><small id="phaseLabel" class="phasePill">10分前 CANDIDATE待ち</small></div>
       <div id="confidence" class="muted" style="margin:-3px 0 8px">データ信頼度 —</div>
       <div id="raceSignal" class="raceSignal grade-d"><div><span>SIGNAL LEVEL</span><b>LOW SIGNAL</b><small>10分前CANDIDATE待ち</small></div><div class="signalScale"><span class="gs">S PRIME</span><span class="ga">A STRONG</span><span class="gb">B SELECT</span><span class="gc">C WATCH</span><span class="gd">D LOW</span></div></div>
       <div id="guardBar" class="guardBar"><b>RESULT GUARD</b><small id="guardNote">30レースまでは収集中。単発の外れでロジックを追いかけません。</small><span id="guardState" class="guardState COLLECTING">COLLECTING</span></div>
@@ -534,7 +564,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
       <div class="dnaRibbon"><div><b>GAP</b><span>断層</span></div><div><b>ISOLATION</b><span>ポツン</span></div><div><b>FLOAT</b><span>浮き</span></div><div><b>CROSS</b><span>市場一致</span></div><div><b>POTUN</b><span>組合せ孤立</span></div><div><b>ACCEL</b><span>直前加速</span></div></div>
     </section>
     <section class="panel pad flowPanel">
-      <div class="flowHead"><div><h2>RACE FLOW / 3D</h2><div class="sectionKicker">近走コーナー通過位置・脚質・枠から構成する、奥行きのある競走シーン。想定隊列を可視化します。</div></div><div id="flowMeta" class="flowMeta"><span class="flowPill">DATA WAIT</span></div></div>
+      <div class="flowHead"><div><h2>展開（3D）</h2><div class="sectionKicker">近走コーナー通過位置・脚質・枠から構成する、奥行きのある競走シーン。想定隊列を可視化します。</div></div><div id="flowMeta" class="flowMeta"><span class="flowPill">DATA WAIT</span></div></div>
       <div class="flowStage">
         <div class="flowControls"><button id="flowPlay" class="primary" type="button">▶ 予想レース再生</button><button id="flowReset" type="button">↺ START</button><button id="flowSpeed" type="button" aria-label="再生速度">1×</button><span class="flowTruth">予想アニメーション / 実位置ではありません</span><span id="flowPhase" class="flowPhase">START</span></div>
         <div id="flowFinish" class="flowFinish"><div class="flowFinishLabel"><b>展開上の前方候補</b><span>予測・実結果ではありません</span></div><div class="flowFinishPodium"><div>1着 <b>—</b></div><div>2着 <b>—</b></div><div>3着 <b>—</b></div></div></div>
@@ -545,11 +575,11 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
       </div>
     </section>
     <section class="panel rankPanel">
-      <div class="head pad" style="padding-bottom:9px"><h2 id="rankingTitle">SCOPE RANKING</h2><div class="rankTools"><button class="rankTool active" data-rank="scope">FINAL順</button><button class="rankTool" data-rank="pop">人気順</button><button class="rankTool" data-rank="dna">DNA順</button><button class="rankTool" data-rank="potun">POTUN順</button><button class="rankTool" data-rank="accel">ACCEL順</button><button class="rankTool" data-rank="raceflow">展開順</button></div></div>
+      <div class="head pad" style="padding-bottom:9px"><h2 id="rankingTitle">全頭ランキング</h2><div class="rankTools"><button class="rankTool active" data-rank="scope">FINAL順</button><button class="rankTool" data-rank="pop">人気順</button><button class="rankTool" data-rank="dna">DNA順</button><button class="rankTool" data-rank="potun">POTUN順</button><button class="rankTool" data-rank="accel">ACCEL順</button><button class="rankTool" data-rank="raceflow">展開順</button></div></div>
       <div class="rankWrap"><div id="rankHead" class="rankHead"><span>順位</span><span>馬 / 人気 / 騎手</span><span>単勝</span><span>DNA</span><span>GAP</span><span>POTUN</span><span>ACCEL</span><span>SCOPE</span><span>判定</span></div><div id="ranking"><div class="pad muted">10分前CANDIDATE待ち</div></div></div>
     </section>
-    <section class="panel pad"><div class="head"><h2>SELECTED HORSE / DEEP VIEW</h2><span id="updated" class="badge"></span></div><div id="horseDetail" class="muted">ランキングから馬を選択してください。</div></section>
-    <details><summary>MARKET TAPE / DATA STATUS</summary><div><div class="tape">
+    <section class="panel pad"><div class="head"><h2>選んだ馬の詳細</h2><span id="updated" class="badge"></span></div><div id="horseDetail" class="muted">ランキングから馬を選択してください。</div></section>
+    <details><summary>取得したオッズの記録</summary><div><div class="tape">
       <div class="slot"><span>15分前</span><b id="s15">未取得</b><em id="t15">—</em></div><div class="slot"><span>10分前</span><b id="s10">未取得</b><em id="t10">—</em></div><div class="slot"><span>5分前</span><b id="s5">未取得</b><em id="t5">—</em></div><div class="slot"><span>4分前</span><b id="s4">未取得</b><em id="t4">—</em></div><div class="slot"><span>3分前</span><b id="s3">未取得</b><em id="t3">—</em></div>
     </div><div id="marketCount" class="marketCount"></div></div></details>
     <details><summary>詳細検証・結果データ</summary><div><div id="result" class="muted">未取得</div></div></details>
@@ -769,7 +799,7 @@ function renderPlaceValue(rows,phase,stored){
 function renderStatus(j){
   last=j;
   let displaySnaps=j.display_snaps||j.snaps||{},slots=Object.keys(displaySnaps).map(Number),legacy=!!j.legacy?.active;
-  $('venueBadge').textContent=j.race.baba_name||'NAR';$('raceNoBadge').textContent=(j.race.race||'—')+'R';$('raceTitle').textContent=`${j.race.baba_name} ${j.race.race}R · MARKET ANALYSIS`;$('raceMeta').textContent=`${j.race.date} · 発走 ${j.race.start_iso.slice(11,16)} · ODDS DNA`;
+  $('venueBadge').textContent=j.race.baba_name||'NAR';$('raceNoBadge').textContent=(j.race.race||'—')+'R';$('raceTitle').textContent=`${j.race.baba_name} ${j.race.race}R`;$('raceMeta').textContent=`${j.race.date} · 発走 ${j.race.start_iso.slice(11,16)} · ODDS DNA`;
   [15,10,5,4,3].forEach(n=>{let el=$('a'+n),ok=slots.includes(n);el.classList.toggle('ok',ok);el.querySelector('b').textContent=ok?'取得済':'待機'});
   if(legacy){
     $('placeValueRows').innerHTML='<span class="muted">旧データは複勝妙味の評価対象外です。</span>';
@@ -801,7 +831,7 @@ $('flowSpeed').addEventListener('click',()=>{const wasPlaying=flowPlaying;stopFl
 window.addEventListener('resize',()=>drawFlowScene(flowVisualTime));document.addEventListener('visibilitychange',()=>{if(document.hidden)stopFlow()});
 $('flowReset').addEventListener('click',()=>{stopFlow();flowProgress=0;setFlowProgress(0)});document.querySelectorAll('.flowPhaseBtn').forEach((b,i)=>b.addEventListener('click',()=>{stopFlow();setFlowProgress(i/3)}));
 $('go').onclick=async()=>{if(!$('t').value){$('msg').textContent='発走時刻を入力してください';return}let o=$('b').options[$('b').selectedIndex],iso=$('d').value+'T'+$('t').value+':00+09:00';$('msg').innerHTML='<span class="loading"><i class="dot"></i>予約中…</span>';try{let r=await fetch('/api/reserve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:$('d').value,baba:$('b').value,baba_name:o.text,race:+$('r').value,start_iso:iso})});let j=await r.json();if(j.ok){let lab={15:'15分前',10:'10分CANDIDATE',5:'5分SHORTLIST',4:'4分LATE',3:'3分FINAL'}[j.start_stage]||'次の取得時点';$('msg').textContent=`予約完了。残り約${j.minutes_left}分、${lab}から監視します。取得済みデータに応じて候補を段階更新します。`;void fetch('/api/tick',{method:'POST',cache:'no-store'}).catch(()=>{});load()}else{$('msg').textContent='予約失敗：'+(j.error||r.status)}}catch(e){$('msg').textContent='予約失敗：'+e.message}}
-function updateClock(){let now=new Date(),wd=['日','月','火','水','木','金','土'];if($('todayLabel'))$('todayLabel').textContent=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} (${wd[now.getDay()]})`;if($('clockLabel'))$('clockLabel').textContent=now.toLocaleTimeString('ja-JP',{hour12:false});if($('countdown')&&last?.race?.start_iso){let d=(new Date(last.race.start_iso)-now)/1000;if(d<=0){$('countdown').textContent='発走済'}else{let m=Math.floor(d/60),s=Math.floor(d%60);$('countdown').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}}}
+function updateClock(){let now=new Date(),wd=['日','月','火','水','木','金','土'];if($('todayLabel'))$('todayLabel').textContent=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')} (${wd[now.getDay()]})`;if($('clockLabel'))$('clockLabel').textContent=now.toLocaleTimeString('ja-JP',{hour12:false,timeZone:'Asia/Tokyo'});if($('countdown')&&last?.race?.start_iso){let d=(new Date(last.race.start_iso)-now)/1000;if(d<=0){$('countdown').textContent='発走済'}else{let m=Math.floor(d/60),s=Math.floor(d%60);$('countdown').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}}}
 
 </script>
 <script id="ns-shell">
@@ -836,7 +866,7 @@ function nsBoard(races,now,isToday){
   const ts=live.map(r=>new Date(r.start_iso).getTime()),t0=Math.min(...ts)-20*60000,t1=Math.max(...ts)+10*60000;
   const X=t=>((t-t0)/(t1-t0)*100).toFixed(2)+'%';
   const next=isToday?nsNext(races,now):null,venues=nsVenues(races);
-  const ticks=[];const h0=new Date(t0);h0.setMinutes(0,0,0);for(let t=h0.getTime()+3600000;t<t1;t+=3600000){const d=new Date(t);if(d.getHours()%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${d.getHours()}時</span>`)}
+  const ticks=[];for(let t=Math.floor(t0/3600000)*3600000+3600000;t<t1;t+=3600000){const hr=(new Date(t).getUTCHours()+9)%24;if(hr%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${hr}時</span>`)}
   const lanes=venues.map(v=>`<div class="ns-lane"><span class="ns-lane-name">${esc(v)}</span>${races.filter(r=>r.baba_name===v).map(r=>{
     const t=new Date(r.start_iso).getTime(),done=nsFinished(r,now);
     const cls=r.status==='cancelled'?'off':next&&r.race_key===next.race_key?'next':done?((r.slots||[]).length===5?'full':'done'):'';
