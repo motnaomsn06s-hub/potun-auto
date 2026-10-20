@@ -13,7 +13,7 @@ jobs:
           B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
           python3 scripts_stub_server.py & sleep 2
           curl -s -m 90 -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1700 --virtual-time-budget=20000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1500 --virtual-time-budget=20000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/"
           python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=50,optimize=True)"
           python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN today',len(b))"
 
