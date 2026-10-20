@@ -12,10 +12,10 @@ jobs:
           pip install -q pillow
           B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
           python3 scripts_stub_server.py & sleep 2
-          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1500 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/"
-          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
-          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN today',len(b),(len(b)+3899)//3900)"
+          curl -s -m 90 -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1700 --virtual-time-budget=20000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=50,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN today',len(b))"
 
       - name: c0
         run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
@@ -25,47 +25,3 @@ jobs:
         run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
       - name: c3
         run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
-  past:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: shot
-        run: |
-          pip install -q pillow
-          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
-          python3 scripts_stub_server.py & sleep 2
-          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1300 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/past"
-          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
-          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN past',len(b),(len(b)+3899)//3900)"
-
-      - name: c0
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
-      - name: c1
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
-      - name: c2
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
-      - name: c3
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
-  race:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: shot
-        run: |
-          pip install -q pillow
-          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
-          python3 scripts_stub_server.py & sleep 2
-          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,2600 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/race/2026-10-20%3A18%3A9"
-          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
-          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN race',len(b),(len(b)+3899)//3900)"
-
-      - name: c0
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
-      - name: c1
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
-      - name: c2
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
-      - name: c3
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 

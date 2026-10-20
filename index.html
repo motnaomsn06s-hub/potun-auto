@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Shippori+Mincho+B1:wght@600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <link rel="icon" type="image/png" href="/apple-touch-icon.png?v=20261013b">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20261013b">
-<title>ODDS SCOPE NAR — Ver.13.3 CINEMATIC RACE FLOW</title>
+<title>ODDS SCOPE NAR | 地方競馬</title>
 
 <style>
 :root{
@@ -296,7 +296,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   --ns-ok:#7ED3A6;--ns-miss:#EE8C7F;
   --ns-head:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
   --ns-body:"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN",Meiryo,system-ui,sans-serif;
-  --ns-num:"Barlow Condensed","Arial Narrow",sans-serif;
+  --ns-num:"Barlow Condensed","Arial Narrow","Zen Kaku Gothic New","Hiragino Sans",sans-serif;
   --ns-safe-b:env(safe-area-inset-bottom,0px);--ns-safe-t:env(safe-area-inset-top,0px);
   /* The race page keeps its own markup; these remap its palette onto the night/sand theme. */
   --bg:var(--ns-night);--bg2:var(--ns-panel);--panel:var(--ns-panel);--panel2:#0A1220;--panel3:var(--ns-raise);
@@ -305,17 +305,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 }
 html{background:var(--ns-night)}
 body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
-.app{width:auto;max-width:640px;margin:0 auto;padding:calc(4px + var(--ns-safe-t)) 16px calc(92px + var(--ns-safe-b))}
+.app{width:auto;max-width:640px;margin:0 auto;padding:0 16px calc(92px + var(--ns-safe-b))}
 .ns-num{font-family:var(--ns-num);font-variant-numeric:tabular-nums;letter-spacing:.01em}
 :focus-visible{outline:2px solid var(--ns-sand);outline-offset:3px}
 [hidden]{display:none!important}
 
 /* ---------- top ---------- */
-.ns-top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;margin:0 -16px;padding:10px 16px;background:color-mix(in srgb,var(--ns-night) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--ns-line)}
+.ns-top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;margin:0 -16px;padding:calc(10px + var(--ns-safe-t)) 16px 10px;background:color-mix(in srgb,var(--ns-night) 88%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--ns-line)}
 .ns-logo{display:flex;align-items:center;gap:9px;color:inherit;text-decoration:none;min-width:0}
 .ns-logo img{width:26px;height:26px;border-radius:7px;box-shadow:0 0 0 1px rgba(217,178,111,.4)}
 .ns-logo b{font-family:var(--ns-num);font-weight:600;font-size:18px;letter-spacing:.14em;white-space:nowrap}
-.ns-logo b span{margin-left:.45em;font-family:var(--ns-head);font-weight:700;letter-spacing:.08em;color:var(--ns-sand)}
+.ns-logo b span{margin-left:.45em;color:var(--ns-sand)}
 .ns-clock{margin-left:auto;font-family:var(--ns-num);font-size:15px;color:var(--ns-mute);font-variant-numeric:tabular-nums}
 .ns-icon{display:inline-grid;place-items:center;width:38px;height:38px;min-height:38px;padding:0;border-radius:50%;border:1px solid var(--ns-line-2);background:transparent;color:var(--ns-sand-hi)}
 .ns-icon svg{width:17px;height:17px}
@@ -335,28 +335,24 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-empty{padding:26px 16px;text-align:center;color:var(--ns-mute);border:1px dashed var(--ns-line-2);border-radius:12px;font-size:14px}
 .ns-err{padding:14px;border-radius:12px;border:1px solid #5A3A3A;color:#F3C4BC;background:#1A1012;font-size:14px}
 
-/* ---------- 発走表（見せ場） ---------- */
-.ns-board{position:relative;margin:12px 0 0;padding:12px 12px 8px;border-radius:16px;background:linear-gradient(180deg,#0E1A2E,#0A1322);border:1px solid var(--ns-line)}
-.ns-lanes{position:relative;margin-left:42px}
-.ns-lane{position:relative;height:30px;border-bottom:1px solid rgba(42,62,92,.5)}
-.ns-lane:last-of-type{border-bottom:0}
-.ns-lane-name{position:absolute;left:-42px;top:50%;transform:translateY(-50%);width:38px;font-family:var(--ns-head);font-weight:700;font-size:13px;color:var(--ns-ink);letter-spacing:.04em}
-.ns-lane::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;border-radius:2px;background:linear-gradient(90deg,#3B2F1E,#5E4A2C)}
-.ns-pt{position:absolute;top:50%;width:12px;height:12px;min-height:12px;margin:-6px 0 0 -6px;padding:0;border-radius:50%;border:2px solid var(--ns-sand);background:var(--ns-night);cursor:pointer}
-.ns-pt::after{content:"";position:absolute;inset:-10px}
-.ns-pt.done{border-color:var(--ns-sand-lo);background:var(--ns-sand-lo)}
-.ns-pt.full{border-color:var(--ns-sand);background:var(--ns-sand)}
-.ns-pt.off{border-color:var(--ns-line-2);background:transparent;opacity:.55}
-.ns-pt.next{border-color:var(--ns-sand-hi);background:var(--ns-sand-hi);box-shadow:0 0 0 4px rgba(240,212,154,.18),0 0 18px rgba(240,212,154,.55)}
-@media (prefers-reduced-motion:no-preference){.ns-pt.next{animation:ns-glow 2.4s ease-in-out infinite}}
-@keyframes ns-glow{50%{box-shadow:0 0 0 7px rgba(240,212,154,.08),0 0 26px rgba(240,212,154,.7)}}
-.ns-now{position:absolute;top:-4px;bottom:-2px;width:0;border-left:1.5px solid #FFF6DF;pointer-events:none}
-.ns-now::before{content:"";position:absolute;top:-3px;left:-4.5px;width:7px;height:7px;border-radius:50%;background:#FFF6DF;box-shadow:0 0 10px #FFF6DF}
-.ns-ticks{position:relative;height:18px;margin-left:42px}
-.ns-ticks span{position:absolute;top:2px;transform:translateX(-50%);font-family:var(--ns-num);font-size:11.5px;color:var(--ns-faint)}
-.ns-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0;font-size:11px;color:var(--ns-faint)}
-.ns-legend i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%;border:1.5px solid var(--ns-sand);vertical-align:0}
-.ns-legend i.full{background:var(--ns-sand)}.ns-legend i.done{background:var(--ns-sand-lo);border-color:var(--ns-sand-lo)}
+/* ---------- 開催ボード（見せ場）：競馬場ごとに1行 ---------- */
+.ns-vboard{display:flex;flex-direction:column;gap:8px;margin:12px 0 0}
+.ns-vrow{display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-areas:"name top" "name bar" "name meta";gap:4px 12px;align-items:center;width:100%;min-height:76px;padding:12px 14px;border-radius:14px;border:1px solid var(--ns-line);background:var(--ns-panel);color:inherit;text-align:left;font-weight:400}
+.ns-vrow[aria-pressed="true"]{border-color:var(--ns-sand);background:linear-gradient(180deg,#151C2C,var(--ns-panel));box-shadow:inset 3px 0 0 var(--ns-sand)}
+.ns-vname{grid-area:name;font-family:var(--ns-head);font-size:20px;font-weight:800;letter-spacing:.06em}
+.ns-vtop{grid-area:top;display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
+.ns-vnext{font-size:13px;color:var(--ns-mute);white-space:nowrap}
+.ns-vnext b{font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink)}
+.ns-vnext.end{color:var(--ns-faint)}
+.ns-vcount{font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink);white-space:nowrap}
+.ns-vcount.soon{color:var(--ns-sand-hi)}
+.ns-vbar{grid-area:bar;display:flex;gap:3px}
+.ns-vbar i{flex:1;height:7px;border-radius:2px;background:var(--ns-line-2)}
+.ns-vbar i.full{background:var(--ns-sand)}
+.ns-vbar i.part{background:var(--ns-sand-lo)}
+.ns-vbar i.next{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ns-sand-hi)}
+.ns-vbar i.off{background:transparent;box-shadow:inset 0 0 0 1px var(--ns-line-2);opacity:.5}
+.ns-vmeta{grid-area:meta;font-size:11.5px;color:var(--ns-faint)}
 
 /* ---------- 次の発走 ---------- */
 .ns-next{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:end;margin:12px 0 0;padding:16px;border-radius:16px;border:1px solid var(--ns-line-2);background:var(--ns-panel);color:inherit;text-align:left;width:100%}
@@ -376,14 +372,6 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-lamps i.open{border-color:var(--ns-sand-hi);color:var(--ns-sand-hi)}
 .ns-lamps.lg i{min-width:34px;height:24px;font-size:13px}
 
-/* ---------- 競馬場タブ ---------- */
-.ns-seg{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:22px 0 4px;padding:4px;border-radius:999px;background:var(--ns-panel);border:1px solid var(--ns-line)}
-.ns-seg::-webkit-scrollbar{display:none}
-.ns-seg button{flex:1 0 auto;min-height:38px;padding:7px 14px;border:0;border-radius:999px;background:none;color:var(--ns-mute);font-family:var(--ns-head);font-size:15px;font-weight:700;letter-spacing:.1em}
-.ns-seg button small{margin-left:4px;font-family:var(--ns-num);font-size:12px;letter-spacing:0;color:var(--ns-faint)}
-.ns-seg button[aria-pressed="true"]{background:var(--ns-raise);color:var(--ns-ink);box-shadow:inset 0 0 0 1px var(--ns-line-2)}
-.ns-seg button[aria-pressed="true"] small{color:var(--ns-sand)}
-
 /* ---------- レース行 ---------- */
 .ns-races{display:flex;flex-direction:column}
 .ns-race{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;min-height:64px;padding:12px 2px;border:0;border-bottom:1px solid var(--ns-line);border-radius:0;background:none;color:inherit;text-align:left;font-weight:400}
@@ -401,6 +389,15 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-race .s b{display:block;font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink);font-variant-numeric:tabular-nums}
 .ns-race .s b.soon{color:var(--ns-sand-hi)}
 .ns-race.off{opacity:.5}
+.ns-fav{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--ns-line-2);color:var(--ns-mute)}
+.ns-fav.危険{border-color:#7A3E38;color:var(--ns-miss);background:#2A1513}.ns-fav.注意{border-color:var(--ns-sand-lo);color:var(--ns-sand)}.ns-fav.信頼{border-color:#2F5E46;color:var(--ns-ok)}
+.ns-favcard{margin:0 0 12px;padding:14px 16px;border-radius:16px;border:1px solid var(--ns-line-2);background:var(--ns-panel)}
+.ns-favcard.危険{border-color:#7A3E38;background:linear-gradient(180deg,#22120F,var(--ns-panel))}
+.ns-favcard h3{margin:0 0 6px;font-family:var(--ns-head);font-size:16px;font-weight:700;letter-spacing:.04em}
+.ns-favcard .row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ns-favcard .row b{font-family:var(--ns-head);font-size:22px;font-weight:800}
+.ns-favcard .row .ns-fav{font-size:13px;padding:3px 10px;margin:0}
+.ns-favcard p{margin:6px 0 0;font-size:13px;color:var(--ns-mute);line-height:1.75}
 .ns-done{margin-top:6px}
 .ns-done summary{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:8px 2px;cursor:pointer;list-style:none;color:var(--ns-mute);font-size:13.5px;border-bottom:1px solid var(--ns-line)}
 .ns-done summary::-webkit-details-marker{display:none}
@@ -440,7 +437,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-ghost{min-height:40px;padding:8px 14px;border-radius:999px;border:1px solid #5A3A37;background:transparent;color:var(--ns-miss);font-size:13px}
 
 /* ---------- レース画面（既存の詳細） ---------- */
-.ns-race-bar{position:sticky;top:59px;z-index:25;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 -16px;padding:8px 16px;background:color-mix(in srgb,var(--ns-night) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--ns-line)}
+.ns-race-bar{position:sticky;top:calc(59px + var(--ns-safe-t));z-index:25;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 -16px;padding:8px 16px;background:color-mix(in srgb,var(--ns-night) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--ns-line)}
 .ns-race-bar a{display:inline-flex;align-items:center;min-height:40px;color:var(--ns-sand-hi);text-decoration:none;font-weight:700;font-size:14px}
 #detail{margin-top:12px}
 #detail .panel,#detail .raceConsole{background:var(--ns-panel)!important;border-color:var(--ns-line)!important;box-shadow:none!important}
@@ -494,7 +491,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 <body>
 <div class="app">
   <header class="ns-top">
-    <a class="ns-logo" href="#/" aria-label="今日のレースへ"><img src="/apple-touch-icon.png?v=20261013b" alt=""><b>ODDS SCOPE<span>地方</span></b></a>
+    <a class="ns-logo" href="#/" aria-label="今日のレースへ"><img src="/apple-touch-icon.png?v=20261013b" alt=""><b>ODDS SCOPE<span>NAR</span></b></a>
     <span class="ns-clock" id="clockLabel" aria-label="現在時刻">--:--:--</span>
     <button type="button" class="ns-icon" id="headerRefresh" onclick="refreshHeaderData()" aria-label="最新の状態に更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </header>
@@ -502,9 +499,10 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
   <main id="nsView" class="ns-view" aria-live="polite"></main>
 
   <section id="nsRecord" class="ns-page" hidden>
-    <div class="ns-title"><h1>成績</h1><p>FINAL上位3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
+    <div class="ns-title"><h1>成績</h1><p>最終候補の3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
     <div id="learn" class="ns-block">集計を読み込んでいます</div>
     <div id="roi"></div>
+    <div id="nsFavRec"></div>
   </section>
 
   <section id="nsMore" class="ns-page" hidden>
@@ -533,6 +531,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 
   <nav class="ns-race-bar" id="nsRaceBar" hidden><a id="nsBack" href="#/">‹ 一覧に戻る</a><button type="button" class="ns-ghost" id="nsCancel">このレースの記録をやめる</button></nav>
   <div id="detail" class="detail">
+    <div id="nsFav"></div>
     <section class="raceConsole">
       <div class="raceConsoleTop">
         <div class="raceIdentity"><span id="venueBadge" class="venueBadge">NAR</span><span id="raceNoBadge" class="raceNoBadge">--R</span><div class="raceText"><b id="raceTitle">LIVE SCOPE</b><small id="raceMeta">—</small></div></div>
@@ -823,7 +822,7 @@ function renderStatus(j){
   let latest=displaySnaps?.['3']||displaySnaps?.['4']||displaySnaps?.['5']||displaySnaps?.['10']||displaySnaps?.['15'];if(latest?.counts){let c=latest.counts;$('marketCount').textContent=`取得市場：単勝 ${c.win||0}頭 / 馬連 ${c.Q||0} / 馬単 ${c.E||0} / ワイド ${c.W||0} / 三連複 ${c.R||0} / 三連単 ${c.T||0}`}else $('marketCount').textContent='';
   $('detail').style.display='block';updateClock();if(!j.profile_ready)refreshProfile(j.race.race_key)
 }
-async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
+async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j);if(typeof nsFavCard==='function')nsFavCard(j.favorite_check)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
 document.addEventListener('click',e=>{let sort=e.target.closest('.rankTool');if(sort){rankMode=sort.dataset.rank||'scope';if(last&&!last.legacy?.active)renderRanking(last.rankings||[]);return}let b=e.target.closest('[data-act]');if(b){let k=decodeURIComponent(b.dataset.key||'');b.dataset.act==='show'?show(k):cancelR(k);return}let row=e.target.closest('.rrow[data-horse]');if(row&&last){selectedHorse=Number(row.dataset.horse);renderRanking(last.rankings||[]);renderHorse((last.rankings||[]).find(x=>x.horse===selectedHorse))}})
 $('flowPlay').addEventListener('click',playFlow);
 $('flowSeek').addEventListener('input',e=>{stopFlow();setFlowProgress(Number(e.target.value)/100)});
@@ -845,7 +844,7 @@ const NS_MISS={SCHEDULER_NOT_RUNNING:'サーバー停止',RESERVED_AFTER_WINDOW:
 const NS={route:'',date:null,races:[],venue:null,back:'#/',timers:[],loading:false};
 function nsStore(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
 function nsToday(){return new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})}
-function nsDayLabel(d){const x=new Date(d+'T00:00:00+09:00');return `${x.getMonth()+1}月${x.getDate()}日（${NS_WD[x.getDay()]}）`}
+function nsDayLabel(d){const [y,m,dd]=String(d).split('-').map(Number);return `${m}月${dd}日（${NS_WD[new Date(Date.UTC(y,m-1,dd)).getUTCDay()]}）`}
 function nsHM(iso){return String(iso||'').slice(11,16)}
 function nsMins(iso,now){return (new Date(iso)-now)/60000}
 function nsVenues(races){const v=[...new Set(races.filter(r=>r.status!=='cancelled').map(r=>r.baba_name))];return v.sort((a,b)=>((NS_VENUE_ORDER.indexOf(a)+99)%99)-((NS_VENUE_ORDER.indexOf(b)+99)%99))}
@@ -860,20 +859,24 @@ function nsLamps(r,now,lg){return `<span class="ns-lamps${lg?' lg':''}" aria-lab
 function nsNext(races,now){return races.filter(r=>r.status==='reserved'&&nsMins(r.start_iso,now)>0).sort((a,b)=>new Date(a.start_iso)-new Date(b.start_iso))[0]||null}
 function nsMMSS(sec){sec=Math.max(0,Math.round(sec));const m=Math.floor(sec/60);return m>=60?`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`}
 
-// 発走表：全場をレーンで並べ、発走点と今の時刻を1本の時間軸に置く
-function nsBoard(races,now,isToday){
-  const live=races.filter(r=>r.start_iso);if(!live.length)return '';
-  const ts=live.map(r=>new Date(r.start_iso).getTime()),t0=Math.min(...ts)-20*60000,t1=Math.max(...ts)+10*60000;
-  const X=t=>((t-t0)/(t1-t0)*100).toFixed(2)+'%';
-  const next=isToday?nsNext(races,now):null,venues=nsVenues(races);
-  const ticks=[];for(let t=Math.floor(t0/3600000)*3600000+3600000;t<t1;t+=3600000){const hr=(new Date(t).getUTCHours()+9)%24;if(hr%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${hr}時</span>`)}
-  const lanes=venues.map(v=>`<div class="ns-lane"><span class="ns-lane-name">${esc(v)}</span>${races.filter(r=>r.baba_name===v).map(r=>{
-    const t=new Date(r.start_iso).getTime(),done=nsFinished(r,now);
-    const cls=r.status==='cancelled'?'off':next&&r.race_key===next.race_key?'next':done?((r.slots||[]).length===5?'full':'done'):'';
-    return `<button class="ns-pt ${cls}" style="left:${X(t)}" data-race="${esc(r.race_key)}" aria-label="${esc(v)}${r.race}R ${nsHM(r.start_iso)}${r.status==='cancelled'?' 取消':''}"></button>`}).join('')}</div>`).join('');
-  const nowLine=isToday&&now.getTime()>t0&&now.getTime()<t1?`<i class="ns-now" style="left:${X(now.getTime())}"></i>`:'';
-  return `<section class="ns-board" aria-label="発走表"><div class="ns-lanes">${lanes}${nowLine}</div><div class="ns-ticks">${ticks.join('')}</div>
-  <div class="ns-legend"><span><i class="full"></i>5時点すべて取得</span><span><i class="done"></i>一部取得</span><span><i></i>これから</span></div></section>`;
+// 開催ボード：競馬場ごとに1行。次のレース・発走まで・進み具合・取得率を文字で示し、行を押すとその場の一覧になる
+function nsVenueStats(races,v,now,isToday){
+  const all=races.filter(r=>r.baba_name===v).sort((a,b)=>a.race-b.race),live=all.filter(r=>r.status!=='cancelled');
+  const done=live.filter(r=>nsFinished(r,now)),nx=isToday?nsNext(all,now):null;
+  const got=done.reduce((n,r)=>n+(r.slots||[]).length,0),cap=done.length?got/(done.length*5):null;
+  return {all,live,done,nx,cap};
+}
+function nsBoard(races,now,isToday,selected){
+  const venues=nsVenues(races);if(!venues.length)return '';
+  const rows=venues.map(v=>{
+    const st=nsVenueStats(races,v,now,isToday),m=st.nx?nsMins(st.nx.start_iso,now):null;
+    const head=st.nx?`<span class="ns-vnext">次 <b>${st.nx.race}R</b> ${nsHM(st.nx.start_iso)}</span>`:`<span class="ns-vnext end">${isToday?'終了':st.live.length+'レース'}</span>`;
+    const cd=st.nx?`<span class="ns-vcount${m<=16?' soon':''}">${m<60?'あと'+Math.ceil(m)+'分':nsHM(st.nx.start_iso)}</span>`:'';
+    const segs=st.all.map(r=>{const c=r.status==='cancelled'?'off':nsFinished(r,now)?((r.slots||[]).length===5?'full':'part'):st.nx&&r.race_key===st.nx.race_key?'next':'';return `<i class="${c}" title="${r.race}R"></i>`}).join('');
+    const meta=`${st.done.length}/${st.live.length}R${st.cap==null?'':`・取得 ${Math.round(st.cap*100)}%`}${st.all.length>st.live.length?`・取消 ${st.all.length-st.live.length}`:''}`;
+    return `<button class="ns-vrow" data-venue="${esc(v)}" aria-pressed="${v===selected}"><span class="ns-vname">${esc(v)}</span><span class="ns-vtop">${head}${cd}</span><span class="ns-vbar" aria-hidden="true">${segs}</span><span class="ns-vmeta">${meta}</span></button>`;
+  }).join('');
+  return `<section class="ns-vboard" aria-label="開催中の競馬場">${rows}</section>`;
 }
 function nsNextCard(r,now){
   if(!r)return '';
@@ -884,7 +887,7 @@ function nsNextCard(r,now){
 }
 function nsRow(r,now,isToday){
   const m=nsMins(r.start_iso,now),res=r.result,top=new Set(res?(res.order||[]).filter((h,i)=>(res.places||[])[i]<=3):[]);
-  const picks=(r.picks||[]).length?`<span class="p">FINAL ${r.picks.map(h=>`<em class="${top.has(h)?'hit':''}">${h}</em>`).join('')}</span>`:'';
+  const picks=(r.picks||[]).length?`<span class="p">最終候補 ${r.picks.map(h=>`<em class="${top.has(h)?'hit':''}">${h}</em>`).join('')}</span>`:'';
   let state;
   if(r.status==='cancelled')state='<b>—</b>取消';
   else if(res)state=`<b>${(res.order||[]).slice(0,3).join('-')}</b>結果`;
@@ -892,7 +895,7 @@ function nsRow(r,now,isToday){
   else state=m>-15?'<b>発走</b>結果待ち':'<b>—</b>結果待ち';
   const sub=[r.course,r.field_size?r.field_size+'頭':''].filter(Boolean).join('　');
   return `<button class="ns-race${r.status==='cancelled'?' off':''}" data-race="${esc(r.race_key)}"><span class="t"><b>${nsHM(r.start_iso)}</b><small>${r.race}R</small></span>
-  <span class="m"><b>${esc(r.race_name||r.race+'R')}</b>${sub?`<span>${esc(sub)}</span>`:''}<span class="p">${nsLamps(r,now)}</span>${picks}</span><span class="s">${state}</span></button>`;
+  <span class="m"><b>${esc(r.race_name||r.race+'R')}</b>${sub?`<span>${esc(sub)}</span>`:''}<span class="p">${nsLamps(r,now)}${r.fav?`<span class="ns-fav ${esc(r.fav.verdict)}">本命${r.fav.horse}番 ${esc(r.fav.verdict)}</span>`:''}</span>${picks}</span><span class="s">${state}</span></button>`;
 }
 function nsDayHTML(date,races,now){
   const isToday=date===nsToday(),venues=nsVenues(races);
@@ -904,8 +907,8 @@ function nsDayHTML(date,races,now){
   const open=isToday?mine.filter(r=>!nsFinished(r,now)):[],done=isToday?mine.filter(r=>nsFinished(r,now)):mine;
   const n=races.filter(r=>r.status!=='cancelled').length;
   return `<h1 class="ns-day">${nsDayLabel(date)}<small>${esc(venues.join('・'))}　${n}レース</small></h1>
-  ${nsBoard(races,now,isToday)}${isToday?nsNextCard(nsNext(races,now),now):''}
-  <div class="ns-seg" role="group" aria-label="競馬場">${venues.map(x=>`<button data-venue="${esc(x)}" aria-pressed="${x===v}">${esc(x)}<small>${races.filter(r=>r.baba_name===x&&r.status!=='cancelled').length}</small></button>`).join('')}</div>
+  ${nsBoard(races,now,isToday,v)}${isToday?nsNextCard(nsNext(races,now),now):''}
+  <div class="ns-sub"><h2>${esc(v)}のレース</h2><small>${mine.filter(r=>r.status!=='cancelled').length}レース</small></div>
   ${open.length?`<div class="ns-races">${open.map(r=>nsRow(r,now,isToday)).join('')}</div>`:''}
   ${done.length?(isToday?`<details class="ns-done"${open.length?'':' open'}><summary>終わったレース ${done.length}</summary><div class="ns-races">${done.map(r=>nsRow(r,now,isToday)).join('')}</div></details>`:`<div class="ns-races">${done.map(r=>nsRow(r,now,false)).join('')}</div>`):''}`;
 }
@@ -949,7 +952,7 @@ async function nsRoute(){
   NS.route=h;
   if(page==='race'&&arg){nsShowPage('race');nsSetNav('');window.scrollTo(0,0);await show(arg);return}
   window.scrollTo(0,0);
-  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();return}
+  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();nsFavRecord();return}
   if(page==='more'){nsShowPage('nsMore');nsSetNav('more');NS.back='#/more';nsHealth();return}
   nsShowPage('nsView');
   if(page==='past'&&!arg){nsSetNav('past');NS.date=null;NS.back='#/past';await nsShowDays();return}
@@ -981,13 +984,34 @@ async function cancelR(k){
     alert('取り消せませんでした：'+e.message);$('msg').textContent='取り消せませんでした：'+e.message;
   }finally{if(btn){btn.disabled=false;btn.textContent='このレースの記録をやめる'}}
 }
+function nsFavCard(f){
+  const el=$('nsFav');if(!el)return;const c=f&&f.check;
+  if(!c){el.innerHTML='';return}
+  const stage=c.slot===3?'3分前':c.slot?c.slot+'分前':'';
+  const rule=f.enabled?'検証で有効と確認済み：「危険」は1番手から3番手に下げています。':`検証中：今後「危険」と判定した馬があと${f.need??'—'}頭たまり、3着内率がはっきり低いと確認できたら、自動で1番手から外します。`;
+  el.innerHTML=`<section class="ns-favcard ${esc(c.verdict)}"><h3>本命チェック</h3><div class="row"><b>${c.horse}番</b><span>${stage}の単勝 ${Number(c.odds).toFixed(1)}倍</span><span class="ns-fav ${esc(c.verdict)}">${esc(c.verdict)}</span></div><p>${esc(c.reason)}。</p><p>${rule}</p></section>`;
+}
+async function nsFavRecord(){
+  const el=$('nsFavRec');if(!el)return;
+  try{const x=await(await fetch('/api/favorite-audit',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
+    const row=g=>`<tr><td>${esc(g.verdict)}</td><td>${g.horses}</td><td>${rate(g.place_rate)}</td><td><b class="${(g.place_roi||0)>=1?'up':'down'}">${rate(g.place_roi)}</b></td></tr>`;
+    const pr=x.prospective||{},rt=x.retro||{};
+    el.innerHTML=`<section class="ns-block"><h2 class="ns-h2">本命チェック（1倍台の人気馬）</h2>
+    <p class="ns-note">3分前の単勝が2.0倍未満の1番人気を、他の券種での支持の強さで「信頼・注意・危険」に分けています。${pr.enabled?'検証の結果、「危険」は1番手から外しています。':`今は表示だけです。「危険」があと${pr.need??'—'}頭たまり、3着内率がはっきり低いと確認できたら、自動で1番手から外します。`}</p>
+    <h3 class="ns-h2" style="font-size:14px;margin-top:12px">今日以降の判定（検証用）</h3>
+    <table class="ns-tbl"><thead><tr><th>判定</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(pr.by_verdict||[]).map(row).join('')}</tbody></table>
+    <h3 class="ns-h2" style="font-size:14px;margin-top:14px">参考：基準を決めた過去分 ${rt.heavy_favorites||0}頭</h3>
+    <table class="ns-tbl"><thead><tr><th>判定</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(rt.by_verdict||[]).map(row).join('')}</tbody></table>
+    <p class="ns-note">過去分は結果を見てから基準を決めたため、当否の証拠にはしません。</p></section>`}
+  catch(e){el.innerHTML='<div class="ns-err">本命チェックの集計を取得できませんでした。</div>'}
+}
 function rate(x){return x==null?'—':(x*100).toFixed(1)+'%'}
 const NS_SYS={COLLECTING:['集計中','30レースまでは判定しません'],PASS:['人気を上回る','直近30レースで人気上位3頭より良い'],HOLD:['人気と同程度','直近30レースで人気上位3頭と同水準'],REVIEW:['人気を下回る','人気薄の昇格と学習の反映を自動で抑えています']};
 const NS_MODEL={COLLECTING:'学習データを集めています',ACTIVE:'学習モデルを使用中',KEEP_HEURISTIC:'検証の結果、学習モデルは採用していません'};
 async function learn(){try{
   const x=await(await fetch('/api/learning',{cache:'no-store'})).json(),rp=x.recent_performance||{},rf=x.recent_favorite||{},st=NS_SYS[x.system_status]||NS_SYS.COLLECTING;
   $('learn').innerHTML=`<h2 class="ns-h2">3着内に入った割合</h2><div class="ns-stats">
-  <div class="ns-stat"><span>FINAL上位3頭</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}レース・候補1頭ごと</small></div>
+  <div class="ns-stat"><span>最終候補3頭</span><b>${rate(rp.pick_rate)}</b><small>直近${rp.races||0}レース・候補1頭ごと</small></div>
   <div class="ns-stat base"><span>人気上位3頭</span><b>${rate(rf.pick_rate)}</b><small>同じレースでの基準</small></div>
   <div class="ns-stat"><span>1頭以上が3着内</span><b>${rate(rp.race_hit_rate)}</b><small>人気上位3頭は ${rate(rf.race_hit_rate)}</small></div>
   <div class="ns-stat"><span>1位候補が3着内</span><b>${rate(rp.top1_place_rate)}</b><small>3頭とも3着内 ${rate(rp.perfect3_rate)}</small></div></div>
@@ -997,7 +1021,7 @@ function roiCell(v){if(!v||v.roi==null)return '<td>—</td>';const ci=v.ci95?`${
 async function roiLoad(){try{
   const x=await(await fetch('/api/roi',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
   $('roi').innerHTML=`<section class="ns-block"><h2 class="ns-h2">回収率（公式の払戻金）</h2><p class="ns-note">${x.races||0}レース、1点100円で計算。100%以上が緑。下の段は95%の範囲で、100%をまたぐ間は偶然と区別できません。</p>
-  <table class="ns-tbl"><thead><tr><th>買い方（3頭）</th><th>FINAL上位3</th><th>人気上位3</th></tr></thead><tbody>${(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('')}</tbody></table></section>
+  <table class="ns-tbl"><thead><tr><th>買い方（3頭）</th><th>最終候補3頭</th><th>人気上位3頭</th></tr></thead><tbody>${(x.strategies||[]).map(s=>`<tr><td>${esc(s.label)}</td>${roiCell(s.scope)}${roiCell(s.favorite)}</tr>`).join('')}</tbody></table></section>
   <section class="ns-block"><h2 class="ns-h2">締切直前の売れ方</h2><p class="ns-note">3分前から確定までに単勝オッズがどう動いた馬が走ったか（${x.late_money_races||0}レース・${x.late_money_horses||0}頭）。人気の差も含むため、傾向の確認用です。</p>
   <table class="ns-tbl"><thead><tr><th>動き</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(x.late_money||[]).map(b=>`<tr><td>${esc(b.label)}</td><td>${b.horses||0}</td><td>${rate(b.place_rate)}</td><td><b class="${(b.place_roi||0)>=1?'up':'down'}">${rate(b.place_roi)}</b></td></tr>`).join('')}</tbody></table>
   <p class="ns-note">急に売れた＝確定オッズが3分前より20%以上下がった馬。</p></section>`;
@@ -1008,7 +1032,27 @@ async function refreshHeaderData(){
   try{await Promise.all([NS.route.startsWith('race/')&&cur?show(cur,true):nsRoute(),...(NS.route==='record'?[learn(),roiLoad()]:[])])}catch(e){}
   finally{refreshBusy=false;setTimeout(()=>b.classList.remove('spin'),400)}
 }
+
+// 詳細画面の表示文字だけを日本語にする（判定ロジックの英語キーには触れない）
+const NS_JA=[['SIGNAL LEVEL','シグナルの強さ'],['LOW SIGNAL','弱いシグナル'],['PRIME SIGNAL','最強シグナル'],['STRONG SIGNAL','有力シグナル'],['SELECT SIGNAL','候補シグナル'],['WATCH SIGNAL','注目シグナル'],
+ ['RESULT GUARD','結果による抑制'],['DATA WAIT','データ待ち'],['FINAL READY','最終確定'],['LIVE SCOPE','レース'],['LEGACY DATA','旧形式のデータ'],['LEGACY MARKET','旧形式の市場'],['OFFICIAL DATA','公式データ'],['NOT LIVE','実況ではありません'],
+ ['ODDS DNA','オッズDNA'],['RACE FLOW','展開'],['LATE UPDATE','直前更新'],['MIN FINAL','分前 最終'],['S PRIME','S 最強'],['A STRONG','A 有力'],['B SELECT','B 候補'],['C WATCH','C 注目'],['D LOW','D 弱'],
+ ['CANDIDATE','候補'],['SHORTLIST','絞り込み'],['FINAL','最終'],['BASE','基準'],['COLLECTING','集計中'],['PASS','良好'],['HOLD','様子見'],['REVIEW','見直し'],['WAIT','待機'],
+ ['SCOPE','総合'],['ACCEL','加速'],['ISOLATION','孤立'],['FLOAT','浮き'],['CROSS','一致'],['POTUN','ポツン'],['GAP','断層'],['FLOW','流れ'],['EDGE','優位'],['VALUE','妙味'],
+ ['STEP','段階'],['START','スタート'],['STRETCH','直線'],['BACK','向正面'],['FINISH','ゴール'],['PACE','ペース'],['PREDICTED','予想'],['STATUS','状態'],['SIGNAL','シグナル'],['WHY','根拠'],['PRIME','最強'],['STRONG','有力'],['SELECT','候補'],['WATCH','注目'],['NAR','地方']
+].map(([en,ja])=>[new RegExp('(^|[^A-Za-z])'+en.replace(/ /g,'\\s+')+'(?![A-Za-z])','g'),'$1'+ja]);
+function nsJaText(t){if(!/[A-Z]{3}/.test(t))return t;let u=t;for(const [re,ja] of NS_JA)u=u.replace(re,ja);return u}
+function nsJa(root){
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let n;
+  while((n=w.nextNode())){const p=n.parentNode;if(!p||p.closest('script,style,svg,canvas'))continue;const u=nsJaText(n.nodeValue);if(u!==n.nodeValue)n.nodeValue=u}
+}
 // ---- boot ----
+(function(){const d=document.getElementById('detail');if(!d||typeof MutationObserver!=='function')return;nsJa(d);
+  // Translate only what changed, so the 3D replay's per-frame updates stay cheap.
+  new MutationObserver(recs=>{for(const r of recs){
+    if(r.type==='characterData'){const n=r.target,u=nsJaText(n.nodeValue);if(u!==n.nodeValue)n.nodeValue=u}
+    else for(const a of r.addedNodes){if(a.nodeType===3){const u=nsJaText(a.nodeValue);if(u!==a.nodeValue)a.nodeValue=u}else if(a.nodeType===1&&!a.closest('script,style,svg,canvas'))nsJa(a)}
+  }}).observe(d,{childList:true,subtree:true,characterData:true})})();
 $('nsBack').addEventListener('click',e=>{e.preventDefault();location.hash=NS.back||'#/'});
 $('nsCancel').addEventListener('click',()=>cancelR(cur));
 window.addEventListener('hashchange',nsRoute);
