@@ -38,6 +38,8 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  assert(out.includes('ns-board'),'timeline board');assert(out.includes('class="ns-pt next"'),'next race marked');
  assert.equal(ctx.NS.venue,'浦和','default tab = venue of next race');
  assert(out.includes('秋風特別')&&out.includes('左1400m　11頭'));
+ assert(out.includes('門別<small>次 17:30</small>')&&out.includes('浦和<small>次 17:10</small>'),'tabs show next post time');
+ assert(out.includes('class="ns-lane-name" data-venue="盛岡"'),'board lane switches venue');
  assert(out.includes('<i class="miss">10</i>'),'missed 10-minute slot shown');
  assert(out.includes('<em class="hit">3</em><em class="hit">2</em><em class="">7</em>'),'FINAL picks marked against 2着同着 result');
  assert(out.includes('3-2-9'));
