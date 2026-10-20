@@ -3,29 +3,113 @@ on:
   push:
     branches: ['debug/**']
 jobs:
-  dump:
+  today:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Screenshot at iPhone width
+      - name: shot
         run: |
           pip install -q pillow
-          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)
-          if [ -z "$B" ]; then npx -y playwright@1 install chromium >/dev/null 2>&1; B=$(ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome | head -1); fi
-          echo "browser=$B"
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
           python3 scripts_stub_server.py & sleep 2
-          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=2 --window-size=390,1500 --virtual-time-budget=6000 --screenshot=/tmp/full.png http://127.0.0.1:8765/
-          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im=im.resize((im.width//2,im.height//2));im.save('/tmp/shot.jpg',quality=55)"
-          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN',len(b),(len(b)+3899)//3900)"
-      - name: chunks 0
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
-      - name: chunks 1
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
-      - name: chunks 2
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
-      - name: chunks 3
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
-      - name: chunks 4
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(36,45) if i*n<len(b)]" 
-      - name: chunks 5
-        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG',i,b[i*n:(i+1)*n]) for i in range(45,54) if i*n<len(b)]" 
+          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,2300 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN today',len(b),(len(b)+3899)//3900)"
+
+      - name: c0
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
+      - name: c1
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
+      - name: c2
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
+      - name: c3
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG today',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
+  past:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shot
+        run: |
+          pip install -q pillow
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          python3 scripts_stub_server.py & sleep 2
+          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1400 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/past"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN past',len(b),(len(b)+3899)//3900)"
+
+      - name: c0
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
+      - name: c1
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
+      - name: c2
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
+      - name: c3
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG past',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shot
+        run: |
+          pip install -q pillow
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          python3 scripts_stub_server.py & sleep 2
+          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1900 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/record"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN record',len(b),(len(b)+3899)//3900)"
+
+      - name: c0
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG record',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
+      - name: c1
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG record',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
+      - name: c2
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG record',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
+      - name: c3
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG record',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
+  more:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shot
+        run: |
+          pip install -q pillow
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          python3 scripts_stub_server.py & sleep 2
+          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,1700 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/more"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN more',len(b),(len(b)+3899)//3900)"
+
+      - name: c0
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG more',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
+      - name: c1
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG more',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
+      - name: c2
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG more',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
+      - name: c3
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG more',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shot
+        run: |
+          pip install -q pillow
+          B=$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)
+          python3 scripts_stub_server.py & sleep 2
+          curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8765/api/day"
+          "$B" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 --window-size=390,2600 --virtual-time-budget=15000 --screenshot=/tmp/full.png "http://127.0.0.1:8765/#/race/2026-10-20%3A18%3A9"
+          python3 -c "from PIL import Image;im=Image.open('/tmp/full.png').convert('RGB');im.save('/tmp/shot.jpg',quality=45,optimize=True)"
+          python3 -c "import base64;b=base64.b64encode(open('/tmp/shot.jpg','rb').read()).decode();open('/tmp/b64','w').write(b);print('::notice::LEN race',len(b),(len(b)+3899)//3900)"
+
+      - name: c0
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(0,9) if i*n<len(b)]" 
+      - name: c1
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(9,18) if i*n<len(b)]" 
+      - name: c2
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(18,27) if i*n<len(b)]" 
+      - name: c3
+        run: python3 -c "b=open('/tmp/b64').read();n=3900;[print('::notice::IMG race',i,b[i*n:(i+1)*n]) for i in range(27,36) if i*n<len(b)]" 
