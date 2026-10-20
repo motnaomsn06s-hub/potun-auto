@@ -1,0 +1,49 @@
+# Daily encrypted PostgreSQL backup. The repository is public, so the dump is encrypted with
+# AES-256 before upload; without BACKUP_PASSPHRASE the artifact is unreadable.
+# Required repository secrets: BACKUP_DATABASE_URL (Render "External Database URL") and BACKUP_PASSPHRASE.
+name: db-backup
+on:
+  schedule:
+    - cron: '30 20 * * *'   # 05:30 JST, outside race hours
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$PASSPHRASE" ]; then
+            echo "::warning::Backup skipped: add BACKUP_DATABASE_URL and BACKUP_PASSPHRASE repository secrets"
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Dump, verify and encrypt
+        if: steps.cfg.outputs.ok == '1'
+        run: |
+          set -euo pipefail
+          day=$(TZ=Asia/Tokyo date +%F)
+          docker run --rm -e DATABASE_URL postgres:17 sh -c 'pg_dump --no-owner --no-privileges -Fc "$DATABASE_URL"' > db.dump
+          docker run --rm -v "$PWD:/w" postgres:17 pg_restore --list /w/db.dump > toc.txt
+          for t in races snapshots results learning_samples predictions capture_log; do
+            grep -q "TABLE DATA public $t " toc.txt || { echo "::error::table $t missing from dump"; exit 1; }
+          done
+          echo "::notice::backup $day size=$(du -h db.dump | cut -f1) tables=$(grep -c 'TABLE DATA' toc.txt)"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" --symmetric --cipher-algo AES256 \
+              -o "odds-scope-$day.dump.gpg" db.dump
+          rm -f db.dump toc.txt
+          echo "day=$day" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: steps.cfg.outputs.ok == '1'
+        with:
+          name: odds-scope-db-${{ env.day }}
+          path: odds-scope-*.dump.gpg
+          retention-days: 90
+          if-no-files-found: error

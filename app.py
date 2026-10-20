@@ -6,6 +6,10 @@ from capture_timing import capture_slot, capture_still_valid, SLOT_WINDOWS
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading,random
+import roi as roi_eval
+from nar_pages import (parse_venue_days,parse_race_list,parse_payouts,parse_win_place,parse_today_grid,
+                       cancelled_races,stored_baba,VENUE_NAMES)
 
 app=Flask(__name__,static_folder='.')
 BASE="https://www.keiba.go.jp/KeibaWeb/TodayRaceInfo/"
@@ -47,12 +51,18 @@ def init():
  CREATE TABLE IF NOT EXISTS capture_log(
    id BIGSERIAL PRIMARY KEY,at TEXT,race_key TEXT,slot INTEGER,kind TEXT,detail TEXT,duration_ms INTEGER,pid INTEGER
  );
- CREATE INDEX IF NOT EXISTS capture_log_race_at ON capture_log(race_key,at)
+ CREATE INDEX IF NOT EXISTS capture_log_race_at ON capture_log(race_key,at);
+ CREATE TABLE IF NOT EXISTS final_odds(race_key TEXT PRIMARY KEY,fetched_at TEXT,payload TEXT)
  """
  for stmt in schema.split(";"):
   if stmt.strip(): c.execute(stmt)
  c.execute("INSERT INTO model_state(id,status) VALUES(1,'COLLECTING') ON CONFLICT(id) DO NOTHING")
  c.commit();c.close()
+ # Where a reservation came from: 'manual' (form) or 'auto' (official schedule import). Additive only.
+ c=con()
+ try:c.execute("ALTER TABLE races ADD COLUMN source TEXT DEFAULT 'manual'");c.commit()
+ except Exception:c.rollback()
+ c.close()
  # PostgreSQL migration. Version 10 adds official NAR performance profiles while preserving market learning.
  c=con()
  for col,typ in (("parser_version","INTEGER DEFAULT 1"),("odds15","DOUBLE PRECISION"),("odds10","DOUBLE PRECISION"),("odds5","DOUBLE PRECISION"),("odds3","DOUBLE PRECISION"),
@@ -76,7 +86,11 @@ def init():
  c.commit();c.close()
 init()
 
+NAR_MAX_CONCURRENT=6  # all requests to keiba.go.jp share this limit (captures, results, schedule)
+_NAR_SEM=threading.BoundedSemaphore(NAR_MAX_CONCURRENT)
 def soup(path,q):
+ with _NAR_SEM:return _soup(path,q)
+def _soup(path,q):
  # Explicit diagnostics: do not turn network/HTTP failures into empty odds.
  from requests.adapters import HTTPAdapter
  from urllib3.util.retry import Retry
@@ -1135,8 +1149,10 @@ def parse_result(s):
  return [h for _,h in places][:3]
 def parse_result_from_places(places):
  d={};[d.setdefault(p,h) for p,h in places];return [d.get(1),d.get(2),d.get(3)]
-def _result_payload(places):
- return json.dumps({"order":[h for _,h in places],"places":[p for p,_ in places],"dead_heat":len({p for p,_ in places})<len(places)})
+def _result_payload(places,payouts=None):
+ d={"order":[h for _,h in places],"places":[p for p,_ in places],"dead_heat":len({p for p,_ in places})<len(places)}
+ if payouts:d["payouts"]=payouts
+ return json.dumps(d,ensure_ascii=False)
 _RESULT_RETRY={}
 _PROFILE_RETRY={}
 LEARNING_REQUIRED_SLOTS=(15,10,5,3)  # final_features() needs these; 4 is optional
@@ -1218,6 +1234,135 @@ def _capture_race(r):
  finally:_write_capture_log(logs)
  return ev
 
+_FINAL_RETRY={};_PAYOUT_RETRY={};_RESULT_FIRST_COMPLETE={}
+_SCHEDULE_STATE={"last_try":None,"last_ok":None,"error":None,"venues":[],"inserted":0,"time_changed":0,"cancelled":0}
+SCHEDULE_EVERY=timedelta(minutes=10)
+PAYOUT_GRACE=timedelta(minutes=20)  # save a complete finishing order without payouts only after this long
+_TRAIN_STATE={"dirty":False,"last":None}
+TRAIN_EVERY=timedelta(minutes=30)   # training is CPU-heavy on Render Free (0.1 CPU); batch it
+
+def _capture_pending(rr):
+ """True while any open capture window still lacks its snapshot. Maintenance yields only then,
+ so results/schedule work is not starved when many venues run at once."""
+ now=datetime.now(JST);want=[]
+ for r in rr:
+  try:slot=capture_slot((datetime.fromisoformat(r["start_iso"])-now).total_seconds()/60)
+  except Exception:continue
+  if slot is not None:want.append((r["race_key"],slot))
+ if not want:return False
+ try:
+  c=con()
+  try:have={(x["race_key"],int(x["slot"])) for x in c.execute("SELECT race_key,slot FROM snapshots WHERE race_key = ANY(%s)",([k for k,_ in want],)).fetchall() if x.get("slot") is not None}
+  finally:c.close()
+ except Exception:return True  # unknown -> yield to captures
+ return any(w not in have for w in want)
+
+def _request_training():
+ _TRAIN_STATE["dirty"]=True
+ return {"status":"QUEUED"}
+
+def _train_if_due(log):
+ now=datetime.now(JST);last=_TRAIN_STATE["last"]
+ if not _TRAIN_STATE["dirty"] or (last and now-last<TRAIN_EVERY):return None
+ _TRAIN_STATE.update(dirty=False,last=now)
+ try:
+  tr=maybe_train();log(None,None,"TRAIN",json.dumps({k:v for k,v in (tr or {}).items() if not isinstance(v,dict)},ensure_ascii=False)[:400]);return tr
+ except Exception as exc:log(None,None,"ERR_TRAIN",f"{type(exc).__name__}: {exc}")
+
+def sync_schedule(log,force=False):
+ """Reserve every official NAR race for today and tomorrow, follow post-time changes and
+ official 取止. Never revives a reservation the user cancelled and never deletes anything."""
+ now=datetime.now(JST);st=_SCHEDULE_STATE
+ if not force and st["last_try"] and now-st["last_try"]<SCHEDULE_EVERY:return None
+ st["last_try"]=now
+ today=now.date().isoformat();tomorrow=(now.date()+timedelta(days=1)).isoformat()
+ ins=chg=can=0;venues=[]
+ try:
+  top=soup("TodayRaceInfoTop",{})
+  grid=parse_today_grid(top);venues=parse_venue_days(top,[today,tomorrow])
+  for day,code in venues:
+   try:rows=parse_race_list(soup("RaceList",{"k_raceDate":day.replace("-","/"),"k_babaCode":code}))
+   except Exception as exc:log(None,None,"ERR_SCHEDULE",f"{day} {code} {type(exc).__name__}: {exc}");continue
+   off=cancelled_races(grid,code) if day==today else set()
+   baba=stored_baba(code);name=VENUE_NAMES.get(code,code)
+   c=con()
+   try:
+    for x in rows:
+     key=f"{day}:{baba}:{x['race']}"
+     if x["cancelled"] or x["race"] in off:
+      if c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s AND status='reserved' RETURNING race_key",(key,)).fetchone():
+       can+=1;log(key,None,"RACE_CANCELLED_OFFICIAL",f"{name}{x['race']}R 取止")
+      continue
+     if not x["time"]:continue
+     start=datetime.fromisoformat(f"{day}T{x['time']}:00+09:00")
+     old=c.execute("SELECT start_iso,status FROM races WHERE race_key=%s",(key,)).fetchone()
+     if old:
+      if old["status"]=="reserved" and old["start_iso"]!=start.isoformat() and start>now:
+       c.execute("UPDATE races SET start_iso=%s WHERE race_key=%s AND status='reserved'",(start.isoformat(),key))
+       chg+=1;log(key,None,"POST_TIME_CHANGED",f"{old['start_iso'][11:16]} -> {x['time']}")
+      continue
+     if (start-now).total_seconds()<180:continue  # too late to capture anything; never backfilled
+     c.execute("""INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked,source)
+       VALUES(%s,%s,%s,%s,%s,%s,'reserved',%s,0,'auto') ON CONFLICT(race_key) DO NOTHING""",(key,day,baba,name,x["race"],start.isoformat(),now.isoformat()))
+     ins+=1
+    c.commit()
+   finally:c.close()
+  st.update(last_ok=now.isoformat(),error=None,venues=[f"{d}:{VENUE_NAMES.get(v,v)}" for d,v in venues],inserted=st["inserted"]+ins,time_changed=st["time_changed"]+chg,cancelled=st["cancelled"]+can)
+  log(None,None,"SCHEDULE_SYNC",f"venues={len(venues)} inserted={ins} time_changed={chg} cancelled={can}")
+  return {"venues":venues,"inserted":ins,"time_changed":chg,"cancelled":can}
+ except Exception as exc:
+  st["error"]=f"{type(exc).__name__}: {str(exc)[:200]}";log(None,None,"ERR_SCHEDULE",st["error"])
+
+def _final_odds_step(log,limit=2):
+ """Store the closing (確定) win/place odds once the race is over, for 3-minute -> final analysis."""
+ now=datetime.now(JST)
+ c=con()
+ try:rows=[dict(x) for x in c.execute("""SELECT r.* FROM races r WHERE r.status IN ('reserved','complete') AND r.start_iso <= %s AND r.start_iso >= %s
+   AND NOT EXISTS (SELECT 1 FROM final_odds f WHERE f.race_key=r.race_key)
+   AND EXISTS (SELECT 1 FROM snapshots s WHERE s.race_key=r.race_key)
+   ORDER BY r.start_iso DESC LIMIT 10""",((now-timedelta(minutes=10)).isoformat(),(now-timedelta(hours=6)).isoformat())).fetchall()]
+ finally:c.close()
+ done=0
+ for r in rows:
+  if done>=limit:break
+  last=_FINAL_RETRY.get(r["race_key"])
+  if last and now-last<timedelta(minutes=5):continue
+  _FINAL_RETRY[r["race_key"]]=now;done+=1
+  try:
+   wp=parse_win_place(soup("OddsTanFuku",qfor(r)))
+   if len(wp)<2:log(r["race_key"],None,"FINAL_ODDS_PENDING",f"horses={len(wp)}");continue
+   post=datetime.fromisoformat(r["start_iso"]);at=datetime.now(JST)
+   payload={"horses":{str(h):v for h,v in wp.items()},"fetched_at":at.isoformat(),"minutes_after_post":round((at-post).total_seconds()/60,1),"source":"OddsTanFuku"}
+   c=con();c.execute("INSERT INTO final_odds VALUES(%s,%s,%s) ON CONFLICT(race_key) DO NOTHING",(r["race_key"],at.isoformat(),json.dumps(payload)));c.commit();c.close()
+   log(r["race_key"],None,"FINAL_ODDS",f"horses={len(wp)}")
+  except Exception as exc:log(r["race_key"],None,"ERR_FINAL_ODDS",f"{type(exc).__name__}: {exc}")
+
+def _payout_backfill_step(log):
+ """Add official payouts to stored results that predate payout capture (one race per pass)."""
+ now=datetime.now(JST)
+ c=con()
+ try:rows=[dict(x) for x in c.execute("""SELECT r.*,x.payload AS result_payload FROM results x JOIN races r USING(race_key)
+   WHERE x.payload IS NULL OR x.payload NOT LIKE %s ORDER BY x.fetched_at DESC LIMIT 20""",('%"payouts"%',)).fetchall()]
+ finally:c.close()
+ for r in rows:
+  last=_PAYOUT_RETRY.get(r["race_key"])
+  if last and now-last<timedelta(minutes=30):continue
+  _PAYOUT_RETRY[r["race_key"]]=now
+  try:
+   page=soup("RaceMarkTable",qfor(r));pay=parse_payouts(page)
+   if "単勝" not in pay:log(r["race_key"],None,"PAYOUT_UNAVAILABLE","official refund table not found");return
+   try:old=json.loads(r.get("result_payload") or "null")
+   except Exception:old=None
+   if not isinstance(old,dict):old={"order":old if isinstance(old,list) else None,"places":None}
+   places=parse_result_places(page)
+   if result_complete(places) and not old.get("places"):old.update(order=[h for _,h in places],places=[p for p,_ in places],dead_heat=len({p for p,_ in places})<len(places))
+   old["payouts"]=pay
+   # Only the payload gains data; the stored first/second/third columns are left as they were.
+   c=con();c.execute("UPDATE results SET payload=%s WHERE race_key=%s",(json.dumps(old,ensure_ascii=False),r["race_key"]));c.commit();c.close()
+   log(r["race_key"],None,"PAYOUT_BACKFILL",f"types={len(pay)}")
+  except Exception as exc:log(r["race_key"],None,"ERR_PAYOUT_BACKFILL",f"{type(exc).__name__}: {exc}")
+  return
+
 def due(capture=True,maintenance=True,async_capture=False):
  now=datetime.now(JST);pid=os.getpid();logs=[]
  def log(key,slot,kind,detail="",ms=None):logs.append((datetime.now(JST).isoformat(),key,slot,kind,str(detail)[:500],ms,pid))
@@ -1232,8 +1377,8 @@ def due(capture=True,maintenance=True,async_capture=False):
     if capture_slot(mins) is None:continue
     if async_capture:_dispatch_capture(r)
     else:ev.extend(_capture_race(r))
-  # Slow work (profiles, results, training) runs only when no capture window opens soon.
-  busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
+  # Slow work yields while an open capture window still lacks its snapshot (captures take ~5 s).
+  busy=_capture_pending(rr) if maintenance else True
   if maintenance and not busy:
    for r in rr:
     mins=(datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60
@@ -1273,9 +1418,9 @@ def due(capture=True,maintenance=True,async_capture=False):
      if n:
       repaired+=1
       log(item["race_key"],None,"LEARNING_REPAIRED",f"samples={n}")
-    if repaired:maybe_train()
+    if repaired:_request_training()
    except Exception as exc:log(None,None,"ERR_LEARNING_REPAIR",f"{type(exc).__name__}: {exc}")
-  busy=any(_slot_soon((datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60) for r in rr)
+  busy=_capture_pending(rr) if maintenance else True
   if maintenance and not busy:
    # Results are looked up in their own query: the capture query above only covers races up to
    # 6 minutes after post time, so results must not depend on it.
@@ -1291,20 +1436,33 @@ def due(capture=True,maintenance=True,async_capture=False):
     if last_try and now2-last_try<timedelta(minutes=5):continue
     _RESULT_RETRY[r["race_key"]]=now2;attempts+=1
     try:
-     places=parse_result_places(soup("RaceMarkTable",qfor(r)))
+     page=soup("RaceMarkTable",qfor(r))
+     places=parse_result_places(page)
+     try:payouts=parse_payouts(page)
+     except Exception:payouts={}
      rs=[h for _,h in places][:3] if result_complete(places) else parse_result_from_places(places)
-     if result_complete(places):
-      c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),_result_payload(places)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
+     # Payouts appear when the result is official (確定); wait for them, but not forever.
+     ready=result_complete(places) and ("単勝" in payouts or now2-_RESULT_FIRST_COMPLETE.setdefault(r["race_key"],now2)>=PAYOUT_GRACE)
+     if result_complete(places) and not ready:log(r["race_key"],None,"RESULT_WAIT_PAYOUT",f"{rs} order known, refunds not yet published")
+     if ready:
+      c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),_result_payload(places,payouts)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
+      _RESULT_FIRST_COMPLETE.pop(r["race_key"],None)
+      if "単勝" not in payouts:log(r["race_key"],None,"PAYOUT_MISSING","saved finishing order without refunds; backfill will retry")
       # Label every horse placed 1-3 (a 3着同着 can give four in-the-money horses).
-      n=store_learning_samples(r["race_key"],[h for _,h in places]);tr=maybe_train() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
+      n=store_learning_samples(r["race_key"],[h for _,h in places]);tr=_request_training() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
       why=""
       if not n:
        try:why=f" missing_slots={_missing_learning_slots(r['race_key'])}"
        except Exception:why=""
       dh=" dead_heat places="+str([p for p,_ in places]) if len({p for p,_ in places})<len(places) else ""
       log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}{why}{dh}")
-     else:log(r["race_key"],None,"RESULT_PENDING",f"{rs} places={places}")
+     elif not result_complete(places):log(r["race_key"],None,"RESULT_PENDING",f"{rs} places={places}")
     except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
+ # Additional maintenance, each step yields to pending captures and isolates its own errors.
+  for step in (lambda:_final_odds_step(log),lambda:sync_schedule(log),lambda:_payout_backfill_step(log),lambda:_train_if_due(log)):
+   if not maintenance or _capture_pending(rr):break
+   try:step()
+   except Exception as exc:log(None,None,"ERR_MAINTENANCE_STEP",f"{type(exc).__name__}: {exc}")
  finally:
   if watch:log(None,None,"TICK"," ".join(watch))
   _write_capture_log(logs)
@@ -1362,7 +1520,14 @@ def races():
   has_more=len(rr)>limit;rr=rr[:limit]
   keys=[r["race_key"] for r in rr];snaps={};results={}
   if keys:
-   for x in c.execute("SELECT race_key,slot,payload FROM snapshots WHERE race_key = ANY(%s)",(keys,)).fetchall():snaps.setdefault(x["race_key"],[]).append(x)
+   if want_stages:
+    for x in c.execute("SELECT race_key,slot,payload FROM snapshots WHERE race_key = ANY(%s)",(keys,)).fetchall():snaps.setdefault(x["race_key"],[]).append(x)
+   else:
+    # The queue only needs which slots are current: read parser_version in SQL instead of shipping
+    # every odds payload to the app (the queue refreshes every 10 s on the phone).
+    for x in c.execute("""SELECT race_key,slot,COALESCE(substring(payload from '"parser_version": *([0-9]+)')::int,0) AS pv
+      FROM snapshots WHERE race_key = ANY(%s)""",(keys,)).fetchall():
+     snaps.setdefault(x["race_key"],[]).append({"race_key":x["race_key"],"slot":x["slot"],"payload":json.dumps({"parser_version":x["pv"]})})
    for x in c.execute("SELECT * FROM results WHERE race_key = ANY(%s)",(keys,)).fetchall():results[x["race_key"]]=dict(x)
   c.close()
   out=[]
@@ -1522,6 +1687,7 @@ def ensure_auto_loop():
  """Start the 15-second loop in THIS process. Threads do not survive fork (gunicorn --preload,
  worker restarts), so the loop is (re)started per process and whenever its thread has died."""
  global _tick_lock
+ if os.environ.get("ODDS_SCOPE_NO_SCHEDULER")=="1":return  # CI: tests drive due() themselves, no network
  pid=os.getpid();t=_loop_state.get("thread")
  if _loop_state["pid"]==pid and t is not None and t.is_alive():return
  with _loop_guard:
@@ -1649,6 +1815,7 @@ def capture_health():
   return jsonify(ok=True,date=d0.isoformat(),now=now.isoformat(),races=out,
    summary={"slots_due":due_n,"slots_ok":ok_n,"success_rate":round(ok_n/due_n,3) if due_n else None,"missed_by_reason":causes,
             "races_all5":sum(x["captured"]==5 for x in out),"races":len(out)},
+   schedule={k:(v.isoformat() if isinstance(v,datetime) else v) for k,v in _SCHEDULE_STATE.items()},
    scheduler={**_scheduler_info(),"last_beat":beat["v"] if beat else None,"beat_age_s":round(age,1) if age is not None else None,
               "stale":bool(age is None or age>SCHEDULER_GAP_SECONDS),"gaps_today":gaps})
  except Exception as e:
@@ -1656,6 +1823,50 @@ def capture_health():
    if c:c.close()
   except Exception:pass
   return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
+_ROI_CACHE={"at":None,"data":None}
+def compute_roi():
+ """FINAL top-3 vs popular top-3 on official payouts, plus 3分前→確定 late-money buckets."""
+ c=con()
+ try:
+  res={x["race_key"]:x["payload"] for x in c.execute("SELECT race_key,payload FROM results WHERE payload LIKE %s",('%"payouts"%',)).fetchall()}
+  keys=list(res)
+  picks={};snaps={};finals={}
+  if keys:
+   for x in c.execute("SELECT race_key,horse,rank FROM predictions WHERE race_key = ANY(%s) ORDER BY race_key,rank",(keys,)).fetchall():picks.setdefault(x["race_key"],[]).append(int(x["horse"]))
+   for x in c.execute("SELECT race_key,slot,payload FROM snapshots WHERE race_key = ANY(%s) AND slot IN (3,4,5)",(keys,)).fetchall():
+    try:p=json.loads(x["payload"])
+    except Exception:continue
+    if valid_payload(p):snaps.setdefault(x["race_key"],{})[int(x["slot"])]=p
+   for x in c.execute("SELECT race_key,payload FROM final_odds WHERE race_key = ANY(%s)",(keys,)).fetchall():
+    try:finals[x["race_key"]]=json.loads(x["payload"]).get("horses") or {}
+    except Exception:pass
+ finally:c.close()
+ races=[];late=[]
+ for k,raw in res.items():
+  try:pay=(json.loads(raw) or {}).get("payouts") or {}
+  except Exception:continue
+  stage=next((snaps[k][s] for s in (3,4,5) if s in snaps.get(k,{})),None)
+  odds={int(r["horse"]):float(r["odds"]) for r in (stage or {}).get("rows",[]) if r.get("odds")}
+  fav=[h for h,_ in sorted(odds.items(),key=lambda z:(z[1],z[0]))][:3]
+  races.append({"race_key":k,"picks":picks.get(k,[])[:3],"favorites":fav,"payouts":pay})
+  s3=snaps.get(k,{}).get(3)
+  if s3 and k in finals:
+   place={int(e["combo"][0]):int(e["yen"]) for e in pay.get("複勝",[])}
+   for r in s3.get("rows",[]):
+    h=int(r["horse"]);f=finals[k].get(str(h)) or {}
+    if r.get("odds") and f.get("win"):late.append({"odds3":float(r["odds"]),"final":float(f["win"]),"placed":h in place,"place_yen":place.get(h,0)})
+ out=roi_eval.evaluate(races)
+ out.update(results_with_payouts=len(res),late_money=roi_eval.late_money(late),late_money_horses=len(late),
+            late_money_races=len({k for k in finals if k in res}),computed_at=datetime.now(JST).isoformat())
+ return out
+@app.route("/api/roi")
+def roi_api():
+ try:
+  now=datetime.now(JST)
+  if not _ROI_CACHE["at"] or (now-_ROI_CACHE["at"]).total_seconds()>120 or request.args.get("fresh")=="1":
+   _ROI_CACHE.update(at=now,data=compute_roi())
+  return jsonify(ok=True,**_ROI_CACHE["data"])
+ except Exception as e:return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/status")
 def status():
  try:
@@ -1794,10 +2005,10 @@ def repair_result():
  try:
   key=request.get_json(force=True)["race_key"];c=con();r=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone();c.close()
   if not r:return jsonify(ok=False,error="race not found"),404
-  places=parse_result_places(soup("RaceMarkTable",qfor(r)))
+  page=soup("RaceMarkTable",qfor(r));places=parse_result_places(page);payouts=parse_payouts(page)
   if not result_complete(places):return jsonify(ok=False,error="official result not available",places=places),409
   rs=[h for _,h in places][:3]
-  now=datetime.now(JST);c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(key,*rs,now.isoformat(),_result_payload(places)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(key,));c.commit();c.close()
+  now=datetime.now(JST);c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(key,*rs,now.isoformat(),_result_payload(places,payouts)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(key,));c.commit();c.close()
   store_learning_samples(key,[h for _,h in places]);train=maybe_train()
   return jsonify(ok=True,result=rs,training=train)
  except Exception as e:return jsonify(ok=False,error=str(e)),500

@@ -22,6 +22,7 @@ jobs:
       # Disposable CI database only. Never the production DATABASE_URL.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       ODDS_SCOPE_TEST_DB: '1'
+      ODDS_SCOPE_NO_SCHEDULER: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m unittest -v test_reliability test_scheduler test_race3d test_capture_health test_results_parser test_pg_integration > test-output.txt 2>&1
+          python -m unittest -v test_reliability test_scheduler test_race3d test_capture_health test_results_parser test_auto_schedule_roi test_pg_integration > test-output.txt 2>&1
           code=$?
           cat test-output.txt
           # Surface failures as annotations so they are readable without downloading logs.
