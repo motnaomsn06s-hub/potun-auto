@@ -35,11 +35,11 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  let out=ctx.nsDayHTML('2026-10-20',races,now);
  assert(out.includes('data-venue="門別"')&&out.includes('data-venue="盛岡"')&&out.includes('data-venue="浦和"'));
  assert(out.indexOf('data-venue="門別"')<out.indexOf('data-venue="盛岡"')&&out.indexOf('data-venue="盛岡"')<out.indexOf('data-venue="浦和"'),'north-to-south venue order');
- assert(out.includes('ns-board'),'timeline board');assert(out.includes('class="ns-pt next"'),'next race marked');
+ assert(out.includes('ns-vboard'),'venue board');assert(out.includes('<i class="next" title="10R"></i>'),'next race marked on its venue bar');
  assert.equal(ctx.NS.venue,'浦和','default tab = venue of next race');
  assert(out.includes('秋風特別')&&out.includes('左1400m　11頭'));
- assert(out.includes('門別<small>次 17:30</small>')&&out.includes('浦和<small>次 17:10</small>'),'tabs show next post time');
- assert(out.includes('class="ns-lane-name" data-venue="盛岡"'),'board lane switches venue');
+ assert(out.includes('次 <b>6R</b> 17:30')&&out.includes('次 <b>10R</b> 17:10'),'board shows next race per venue');assert(out.includes('2/3R・取得 90%'),'progress and capture rate');assert(out.includes('浦和のレース'));
+ assert(out.includes('class="ns-vrow" data-venue="浦和" aria-pressed="true"'),'selected venue highlighted');
  assert(out.includes('<i class="miss">10</i>'),'missed 10-minute slot shown');
  assert(out.includes('<em class="hit">3</em><em class="hit">2</em><em class="">7</em>'),'FINAL picks marked against 2着同着 result');
  assert(out.includes('3-2-9'));

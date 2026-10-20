@@ -335,28 +335,24 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-empty{padding:26px 16px;text-align:center;color:var(--ns-mute);border:1px dashed var(--ns-line-2);border-radius:12px;font-size:14px}
 .ns-err{padding:14px;border-radius:12px;border:1px solid #5A3A3A;color:#F3C4BC;background:#1A1012;font-size:14px}
 
-/* ---------- 発走表（見せ場） ---------- */
-.ns-board{position:relative;margin:12px 0 0;padding:12px 12px 8px;border-radius:16px;background:linear-gradient(180deg,#0E1A2E,#0A1322);border:1px solid var(--ns-line)}
-.ns-lanes{position:relative;margin-left:42px}
-.ns-lane{position:relative;height:30px;border-bottom:1px solid rgba(42,62,92,.5)}
-.ns-lane:last-of-type{border-bottom:0}
-.ns-lane-name{position:absolute;left:-42px;top:50%;transform:translateY(-50%);width:40px;min-height:30px;padding:0;border:0;background:none;text-align:left;cursor:pointer;font-family:var(--ns-head);font-weight:700;font-size:13px;color:var(--ns-ink);letter-spacing:.04em}
-.ns-lane::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;border-radius:2px;background:linear-gradient(90deg,#3B2F1E,#5E4A2C)}
-.ns-pt{position:absolute;top:50%;width:12px;height:12px;min-height:12px;margin:-6px 0 0 -6px;padding:0;border-radius:50%;border:2px solid var(--ns-sand);background:var(--ns-night);cursor:pointer}
-.ns-pt::after{content:"";position:absolute;inset:-10px}
-.ns-pt.done{border-color:var(--ns-sand-lo);background:var(--ns-sand-lo)}
-.ns-pt.full{border-color:var(--ns-sand);background:var(--ns-sand)}
-.ns-pt.off{border-color:var(--ns-line-2);background:transparent;opacity:.55}
-.ns-pt.next{border-color:var(--ns-sand-hi);background:var(--ns-sand-hi);box-shadow:0 0 0 4px rgba(240,212,154,.18),0 0 18px rgba(240,212,154,.55)}
-@media (prefers-reduced-motion:no-preference){.ns-pt.next{animation:ns-glow 2.4s ease-in-out infinite}}
-@keyframes ns-glow{50%{box-shadow:0 0 0 7px rgba(240,212,154,.08),0 0 26px rgba(240,212,154,.7)}}
-.ns-now{position:absolute;top:-4px;bottom:-2px;width:0;border-left:1.5px solid #FFF6DF;pointer-events:none}
-.ns-now::before{content:"";position:absolute;top:-3px;left:-4.5px;width:7px;height:7px;border-radius:50%;background:#FFF6DF;box-shadow:0 0 10px #FFF6DF}
-.ns-ticks{position:relative;height:18px;margin-left:42px}
-.ns-ticks span{position:absolute;top:2px;transform:translateX(-50%);font-family:var(--ns-num);font-size:11.5px;color:var(--ns-faint)}
-.ns-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin:6px 0 0;font-size:11px;color:var(--ns-faint)}
-.ns-legend i{display:inline-block;width:8px;height:8px;margin-right:5px;border-radius:50%;border:1.5px solid var(--ns-sand);vertical-align:0}
-.ns-legend i.full{background:var(--ns-sand)}.ns-legend i.done{background:var(--ns-sand-lo);border-color:var(--ns-sand-lo)}
+/* ---------- 開催ボード（見せ場）：競馬場ごとに1行 ---------- */
+.ns-vboard{display:flex;flex-direction:column;gap:8px;margin:12px 0 0}
+.ns-vrow{display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-areas:"name top" "name bar" "name meta";gap:4px 12px;align-items:center;width:100%;min-height:76px;padding:12px 14px;border-radius:14px;border:1px solid var(--ns-line);background:var(--ns-panel);color:inherit;text-align:left;font-weight:400}
+.ns-vrow[aria-pressed="true"]{border-color:var(--ns-sand);background:linear-gradient(180deg,#151C2C,var(--ns-panel));box-shadow:inset 3px 0 0 var(--ns-sand)}
+.ns-vname{grid-area:name;font-family:var(--ns-head);font-size:20px;font-weight:800;letter-spacing:.06em}
+.ns-vtop{grid-area:top;display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
+.ns-vnext{font-size:13px;color:var(--ns-mute);white-space:nowrap}
+.ns-vnext b{font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink)}
+.ns-vnext.end{color:var(--ns-faint)}
+.ns-vcount{font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink);white-space:nowrap}
+.ns-vcount.soon{color:var(--ns-sand-hi)}
+.ns-vbar{grid-area:bar;display:flex;gap:3px}
+.ns-vbar i{flex:1;height:7px;border-radius:2px;background:var(--ns-line-2)}
+.ns-vbar i.full{background:var(--ns-sand)}
+.ns-vbar i.part{background:var(--ns-sand-lo)}
+.ns-vbar i.next{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ns-sand-hi)}
+.ns-vbar i.off{background:transparent;box-shadow:inset 0 0 0 1px var(--ns-line-2);opacity:.5}
+.ns-vmeta{grid-area:meta;font-size:11.5px;color:var(--ns-faint)}
 
 /* ---------- 次の発走 ---------- */
 .ns-next{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:end;margin:12px 0 0;padding:16px;border-radius:16px;border:1px solid var(--ns-line-2);background:var(--ns-panel);color:inherit;text-align:left;width:100%}
@@ -375,14 +371,6 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-lamps i.miss{border-color:#6B3C38;color:var(--ns-miss);text-decoration:line-through}
 .ns-lamps i.open{border-color:var(--ns-sand-hi);color:var(--ns-sand-hi)}
 .ns-lamps.lg i{min-width:34px;height:24px;font-size:13px}
-
-/* ---------- 競馬場タブ ---------- */
-.ns-seg{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:22px 0 4px;padding:4px;border-radius:999px;background:var(--ns-panel);border:1px solid var(--ns-line)}
-.ns-seg::-webkit-scrollbar{display:none}
-.ns-seg button{flex:1 0 auto;min-height:38px;padding:7px 14px;border:0;border-radius:999px;background:none;color:var(--ns-mute);font-family:var(--ns-head);font-size:15px;font-weight:700;letter-spacing:.1em}
-.ns-seg button small{margin-left:4px;font-family:var(--ns-num);font-size:12px;letter-spacing:0;color:var(--ns-faint)}
-.ns-seg button[aria-pressed="true"]{background:var(--ns-raise);color:var(--ns-ink);box-shadow:inset 0 0 0 1px var(--ns-line-2)}
-.ns-seg button[aria-pressed="true"] small{color:var(--ns-sand)}
 
 /* ---------- レース行 ---------- */
 .ns-races{display:flex;flex-direction:column}
@@ -871,20 +859,24 @@ function nsLamps(r,now,lg){return `<span class="ns-lamps${lg?' lg':''}" aria-lab
 function nsNext(races,now){return races.filter(r=>r.status==='reserved'&&nsMins(r.start_iso,now)>0).sort((a,b)=>new Date(a.start_iso)-new Date(b.start_iso))[0]||null}
 function nsMMSS(sec){sec=Math.max(0,Math.round(sec));const m=Math.floor(sec/60);return m>=60?`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`}
 
-// 発走表：全場をレーンで並べ、発走点と今の時刻を1本の時間軸に置く
-function nsBoard(races,now,isToday){
-  const live=races.filter(r=>r.start_iso);if(!live.length)return '';
-  const ts=live.map(r=>new Date(r.start_iso).getTime()),t0=Math.min(...ts)-20*60000,t1=Math.max(...ts)+10*60000;
-  const X=t=>((t-t0)/(t1-t0)*100).toFixed(2)+'%';
-  const next=isToday?nsNext(races,now):null,venues=nsVenues(races);
-  const ticks=[];for(let t=Math.floor(t0/3600000)*3600000+3600000;t<t1;t+=3600000){const hr=(new Date(t).getUTCHours()+9)%24;if(hr%2===0||(t1-t0)<6*3600000)ticks.push(`<span style="left:${X(t)}">${hr}時</span>`)}
-  const lanes=venues.map(v=>`<div class="ns-lane"><button type="button" class="ns-lane-name" data-venue="${esc(v)}" aria-label="${esc(v)}の一覧を表示">${esc(v)}</button>${races.filter(r=>r.baba_name===v).map(r=>{
-    const t=new Date(r.start_iso).getTime(),done=nsFinished(r,now);
-    const cls=r.status==='cancelled'?'off':next&&r.race_key===next.race_key?'next':done?((r.slots||[]).length===5?'full':'done'):'';
-    return `<button class="ns-pt ${cls}" style="left:${X(t)}" data-race="${esc(r.race_key)}" aria-label="${esc(v)}${r.race}R ${nsHM(r.start_iso)}${r.status==='cancelled'?' 取消':''}"></button>`}).join('')}</div>`).join('');
-  const nowLine=isToday&&now.getTime()>t0&&now.getTime()<t1?`<i class="ns-now" style="left:${X(now.getTime())}"></i>`:'';
-  return `<section class="ns-board" aria-label="発走表"><div class="ns-lanes">${lanes}${nowLine}</div><div class="ns-ticks">${ticks.join('')}</div>
-  <div class="ns-legend"><span><i class="full"></i>5時点すべて取得</span><span><i class="done"></i>一部取得</span><span><i></i>これから</span></div></section>`;
+// 開催ボード：競馬場ごとに1行。次のレース・発走まで・進み具合・取得率を文字で示し、行を押すとその場の一覧になる
+function nsVenueStats(races,v,now,isToday){
+  const all=races.filter(r=>r.baba_name===v).sort((a,b)=>a.race-b.race),live=all.filter(r=>r.status!=='cancelled');
+  const done=live.filter(r=>nsFinished(r,now)),nx=isToday?nsNext(all,now):null;
+  const got=done.reduce((n,r)=>n+(r.slots||[]).length,0),cap=done.length?got/(done.length*5):null;
+  return {all,live,done,nx,cap};
+}
+function nsBoard(races,now,isToday,selected){
+  const venues=nsVenues(races);if(!venues.length)return '';
+  const rows=venues.map(v=>{
+    const st=nsVenueStats(races,v,now,isToday),m=st.nx?nsMins(st.nx.start_iso,now):null;
+    const head=st.nx?`<span class="ns-vnext">次 <b>${st.nx.race}R</b> ${nsHM(st.nx.start_iso)}</span>`:`<span class="ns-vnext end">${isToday?'終了':st.live.length+'レース'}</span>`;
+    const cd=st.nx?`<span class="ns-vcount${m<=16?' soon':''}">${m<60?'あと'+Math.ceil(m)+'分':nsHM(st.nx.start_iso)}</span>`:'';
+    const segs=st.all.map(r=>{const c=r.status==='cancelled'?'off':nsFinished(r,now)?((r.slots||[]).length===5?'full':'part'):st.nx&&r.race_key===st.nx.race_key?'next':'';return `<i class="${c}" title="${r.race}R"></i>`}).join('');
+    const meta=`${st.done.length}/${st.live.length}R${st.cap==null?'':`・取得 ${Math.round(st.cap*100)}%`}${st.all.length>st.live.length?`・取消 ${st.all.length-st.live.length}`:''}`;
+    return `<button class="ns-vrow" data-venue="${esc(v)}" aria-pressed="${v===selected}"><span class="ns-vname">${esc(v)}</span><span class="ns-vtop">${head}${cd}</span><span class="ns-vbar" aria-hidden="true">${segs}</span><span class="ns-vmeta">${meta}</span></button>`;
+  }).join('');
+  return `<section class="ns-vboard" aria-label="開催中の競馬場">${rows}</section>`;
 }
 function nsNextCard(r,now){
   if(!r)return '';
@@ -915,8 +907,8 @@ function nsDayHTML(date,races,now){
   const open=isToday?mine.filter(r=>!nsFinished(r,now)):[],done=isToday?mine.filter(r=>nsFinished(r,now)):mine;
   const n=races.filter(r=>r.status!=='cancelled').length;
   return `<h1 class="ns-day">${nsDayLabel(date)}<small>${esc(venues.join('・'))}　${n}レース</small></h1>
-  ${nsBoard(races,now,isToday)}${isToday?nsNextCard(nsNext(races,now),now):''}
-  <div class="ns-seg" role="group" aria-label="競馬場">${venues.map(x=>{const nx=isToday?nsNext(races.filter(r=>r.baba_name===x),now):null;const tag=isToday?(nx?'次 '+nsHM(nx.start_iso):'終了'):races.filter(r=>r.baba_name===x&&r.status!=='cancelled').length+'R';return `<button data-venue="${esc(x)}" aria-pressed="${x===v}">${esc(x)}<small>${tag}</small></button>`}).join('')}</div>
+  ${nsBoard(races,now,isToday,v)}${isToday?nsNextCard(nsNext(races,now),now):''}
+  <div class="ns-sub"><h2>${esc(v)}のレース</h2><small>${mine.filter(r=>r.status!=='cancelled').length}レース</small></div>
   ${open.length?`<div class="ns-races">${open.map(r=>nsRow(r,now,isToday)).join('')}</div>`:''}
   ${done.length?(isToday?`<details class="ns-done"${open.length?'':' open'}><summary>終わったレース ${done.length}</summary><div class="ns-races">${done.map(r=>nsRow(r,now,isToday)).join('')}</div></details>`:`<div class="ns-races">${done.map(r=>nsRow(r,now,false)).join('')}</div>`):''}`;
 }
@@ -974,7 +966,7 @@ function nsTick(){
   const c=$('nsCount');if(c&&NS.date===nsToday()&&!$('nsView').hidden){const nx=nsNext(NS.races,now);if(nx)c.textContent=nsMMSS((new Date(nx.start_iso)-now)/1000)}
 }
 document.addEventListener('click',e=>{
-  const v=e.target.closest('[data-venue]');if(v&&$('nsView').contains(v)){NS.venue=v.dataset.venue;nsStore('nsVenue',NS.venue);if(NS.date)$('nsView').innerHTML=nsDayHTML(NS.date,NS.races,new Date());if(v.classList.contains('ns-lane-name')){const seg=document.querySelector('.ns-seg');if(seg&&seg.scrollIntoView)seg.scrollIntoView({block:'start',behavior:'smooth'})}return}
+  const v=e.target.closest('[data-venue]');if(v&&$('nsView').contains(v)){NS.venue=v.dataset.venue;nsStore('nsVenue',NS.venue);if(NS.date)$('nsView').innerHTML=nsDayHTML(NS.date,NS.races,new Date());return}
   const r=e.target.closest('[data-race]');if(r&&!r.closest('#detail')){location.hash='#/race/'+encodeURIComponent(r.dataset.race)}
 });
 async function cancelR(k){
