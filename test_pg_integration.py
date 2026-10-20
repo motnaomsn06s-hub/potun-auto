@@ -173,10 +173,18 @@ class PostgresIntegration(unittest.TestCase):
         rows15 = [{'horse': 4, 'odds': 1.1, 'base': 0.1}, {'horse': 7, 'odds': 6.0, 'base': 0.0}]
         self.sql("INSERT INTO snapshots VALUES(%s,3,'x',%s),(%s,15,'x',%s)", (key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': rows3}), key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': rows15})))
         self.sql("INSERT INTO results VALUES(%s,7,2,9,'x',%s)", (key, json.dumps({'order': [7, 2, 9], 'places': [1, 2, 3], 'payouts': {'複勝': [{'combo': [7], 'yen': 180, 'pop': 2}]}})))
+        self.sql("INSERT INTO favorite_checks VALUES(%s,4,1.3,-0.8,'危険',%s,'x')", (key, a.favorite_audit.RULE_VERSION))
         body = a.app.test_client().get('/api/favorite-audit').json
-        self.assertTrue(body['ok'])
-        ex = [e for e in body['examples'] if e['race_key'] == key][0]
+        self.assertTrue(body['ok'], body)
+        ex = [e for e in body['retro']['examples'] if e['race_key'] == key][0]
         self.assertEqual((ex['horse'], ex['verdict'], ex['placed'], ex['place_yen']), (4, '危険', False, 0))
+        danger = [g for g in body['prospective']['by_verdict'] if g['verdict'] == '危険'][0]
+        self.assertGreaterEqual(danger['horses'], 1)
+        self.assertFalse(body['prospective']['enabled'])
+        day = a.app.test_client().get('/api/day?date=2001-05-06').json
+        self.assertEqual(day['races'][0]['fav']['verdict'], '危険')
+        st = a.app.test_client().get('/api/status?race_key=' + key).json
+        self.assertEqual(st['favorite_check']['check']['horse'], 4)
 
     def test_advisory_lease_is_exclusive(self):
         a = self.app

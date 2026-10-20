@@ -401,6 +401,15 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 .ns-race .s b{display:block;font-family:var(--ns-num);font-size:17px;font-weight:600;color:var(--ns-ink);font-variant-numeric:tabular-nums}
 .ns-race .s b.soon{color:var(--ns-sand-hi)}
 .ns-race.off{opacity:.5}
+.ns-fav{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--ns-line-2);color:var(--ns-mute)}
+.ns-fav.危険{border-color:#7A3E38;color:var(--ns-miss);background:#2A1513}.ns-fav.注意{border-color:var(--ns-sand-lo);color:var(--ns-sand)}.ns-fav.信頼{border-color:#2F5E46;color:var(--ns-ok)}
+.ns-favcard{margin:0 0 12px;padding:14px 16px;border-radius:16px;border:1px solid var(--ns-line-2);background:var(--ns-panel)}
+.ns-favcard.危険{border-color:#7A3E38;background:linear-gradient(180deg,#22120F,var(--ns-panel))}
+.ns-favcard h3{margin:0 0 6px;font-family:var(--ns-head);font-size:16px;font-weight:700;letter-spacing:.04em}
+.ns-favcard .row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.ns-favcard .row b{font-family:var(--ns-head);font-size:22px;font-weight:800}
+.ns-favcard .row .ns-fav{font-size:13px;padding:3px 10px;margin:0}
+.ns-favcard p{margin:6px 0 0;font-size:13px;color:var(--ns-mute);line-height:1.75}
 .ns-done{margin-top:6px}
 .ns-done summary{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:8px 2px;cursor:pointer;list-style:none;color:var(--ns-mute);font-size:13.5px;border-bottom:1px solid var(--ns-line)}
 .ns-done summary::-webkit-details-marker{display:none}
@@ -505,6 +514,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
     <div class="ns-title"><h1>成績</h1><p>最終候補の3頭が、人気上位3頭よりどれだけ当たり、どれだけ回収できているか。</p></div>
     <div id="learn" class="ns-block">集計を読み込んでいます</div>
     <div id="roi"></div>
+    <div id="nsFavRec"></div>
   </section>
 
   <section id="nsMore" class="ns-page" hidden>
@@ -533,6 +543,7 @@ body{background:var(--ns-night);font-family:var(--ns-body);color:var(--ns-ink);f
 
   <nav class="ns-race-bar" id="nsRaceBar" hidden><a id="nsBack" href="#/">‹ 一覧に戻る</a><button type="button" class="ns-ghost" id="nsCancel">このレースの記録をやめる</button></nav>
   <div id="detail" class="detail">
+    <div id="nsFav"></div>
     <section class="raceConsole">
       <div class="raceConsoleTop">
         <div class="raceIdentity"><span id="venueBadge" class="venueBadge">NAR</span><span id="raceNoBadge" class="raceNoBadge">--R</span><div class="raceText"><b id="raceTitle">LIVE SCOPE</b><small id="raceMeta">—</small></div></div>
@@ -823,7 +834,7 @@ function renderStatus(j){
   let latest=displaySnaps?.['3']||displaySnaps?.['4']||displaySnaps?.['5']||displaySnaps?.['10']||displaySnaps?.['15'];if(latest?.counts){let c=latest.counts;$('marketCount').textContent=`取得市場：単勝 ${c.win||0}頭 / 馬連 ${c.Q||0} / 馬単 ${c.E||0} / ワイド ${c.W||0} / 三連複 ${c.R||0} / 三連単 ${c.T||0}`}else $('marketCount').textContent='';
   $('detail').style.display='block';updateClock();if(!j.profile_ready)refreshProfile(j.race.race_key)
 }
-async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
+async function show(k,silent=false){cur=k;sessionStorage.setItem('oddsScopeCur',k);$('detail').style.display='block';try{let r=await fetch('/api/status?race_key='+encodeURIComponent(k),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);let j=await r.json();if(cur!==k)return;if(!j.race)throw new Error('レース情報なし');renderStatus(j);if(typeof nsFavCard==='function')nsFavCard(j.favorite_check)}catch(e){if(cur===k&&!silent)$('confidence').textContent='詳細取得失敗：'+e.message}}
 document.addEventListener('click',e=>{let sort=e.target.closest('.rankTool');if(sort){rankMode=sort.dataset.rank||'scope';if(last&&!last.legacy?.active)renderRanking(last.rankings||[]);return}let b=e.target.closest('[data-act]');if(b){let k=decodeURIComponent(b.dataset.key||'');b.dataset.act==='show'?show(k):cancelR(k);return}let row=e.target.closest('.rrow[data-horse]');if(row&&last){selectedHorse=Number(row.dataset.horse);renderRanking(last.rankings||[]);renderHorse((last.rankings||[]).find(x=>x.horse===selectedHorse))}})
 $('flowPlay').addEventListener('click',playFlow);
 $('flowSeek').addEventListener('input',e=>{stopFlow();setFlowProgress(Number(e.target.value)/100)});
@@ -892,7 +903,7 @@ function nsRow(r,now,isToday){
   else state=m>-15?'<b>発走</b>結果待ち':'<b>—</b>結果待ち';
   const sub=[r.course,r.field_size?r.field_size+'頭':''].filter(Boolean).join('　');
   return `<button class="ns-race${r.status==='cancelled'?' off':''}" data-race="${esc(r.race_key)}"><span class="t"><b>${nsHM(r.start_iso)}</b><small>${r.race}R</small></span>
-  <span class="m"><b>${esc(r.race_name||r.race+'R')}</b>${sub?`<span>${esc(sub)}</span>`:''}<span class="p">${nsLamps(r,now)}</span>${picks}</span><span class="s">${state}</span></button>`;
+  <span class="m"><b>${esc(r.race_name||r.race+'R')}</b>${sub?`<span>${esc(sub)}</span>`:''}<span class="p">${nsLamps(r,now)}${r.fav?`<span class="ns-fav ${esc(r.fav.verdict)}">本命${r.fav.horse}番 ${esc(r.fav.verdict)}</span>`:''}</span>${picks}</span><span class="s">${state}</span></button>`;
 }
 function nsDayHTML(date,races,now){
   const isToday=date===nsToday(),venues=nsVenues(races);
@@ -949,7 +960,7 @@ async function nsRoute(){
   NS.route=h;
   if(page==='race'&&arg){nsShowPage('race');nsSetNav('');window.scrollTo(0,0);await show(arg);return}
   window.scrollTo(0,0);
-  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();return}
+  if(page==='record'){nsShowPage('nsRecord');nsSetNav('record');NS.back='#/record';learn();roiLoad();nsFavRecord();return}
   if(page==='more'){nsShowPage('nsMore');nsSetNav('more');NS.back='#/more';nsHealth();return}
   nsShowPage('nsView');
   if(page==='past'&&!arg){nsSetNav('past');NS.date=null;NS.back='#/past';await nsShowDays();return}
@@ -980,6 +991,27 @@ async function cancelR(k){
   }catch(e){
     alert('取り消せませんでした：'+e.message);$('msg').textContent='取り消せませんでした：'+e.message;
   }finally{if(btn){btn.disabled=false;btn.textContent='このレースの記録をやめる'}}
+}
+function nsFavCard(f){
+  const el=$('nsFav');if(!el)return;const c=f&&f.check;
+  if(!c){el.innerHTML='';return}
+  const stage=c.slot===3?'3分前':c.slot?c.slot+'分前':'';
+  const rule=f.enabled?'検証で有効と確認済み：「危険」は1番手から3番手に下げています。':`検証中：今後「危険」と判定した馬があと${f.need??'—'}頭たまり、3着内率がはっきり低いと確認できたら、自動で1番手から外します。`;
+  el.innerHTML=`<section class="ns-favcard ${esc(c.verdict)}"><h3>本命チェック</h3><div class="row"><b>${c.horse}番</b><span>${stage}の単勝 ${Number(c.odds).toFixed(1)}倍</span><span class="ns-fav ${esc(c.verdict)}">${esc(c.verdict)}</span></div><p>${esc(c.reason)}。</p><p>${rule}</p></section>`;
+}
+async function nsFavRecord(){
+  const el=$('nsFavRec');if(!el)return;
+  try{const x=await(await fetch('/api/favorite-audit',{cache:'no-store'})).json();if(!x.ok)throw new Error(x.error||'');
+    const row=g=>`<tr><td>${esc(g.verdict)}</td><td>${g.horses}</td><td>${rate(g.place_rate)}</td><td><b class="${(g.place_roi||0)>=1?'up':'down'}">${rate(g.place_roi)}</b></td></tr>`;
+    const pr=x.prospective||{},rt=x.retro||{};
+    el.innerHTML=`<section class="ns-block"><h2 class="ns-h2">本命チェック（1倍台の人気馬）</h2>
+    <p class="ns-note">3分前の単勝が2.0倍未満の1番人気を、他の券種での支持の強さで「信頼・注意・危険」に分けています。${pr.enabled?'検証の結果、「危険」は1番手から外しています。':`今は表示だけです。「危険」があと${pr.need??'—'}頭たまり、3着内率がはっきり低いと確認できたら、自動で1番手から外します。`}</p>
+    <h3 class="ns-h2" style="font-size:14px;margin-top:12px">今日以降の判定（検証用）</h3>
+    <table class="ns-tbl"><thead><tr><th>判定</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(pr.by_verdict||[]).map(row).join('')}</tbody></table>
+    <h3 class="ns-h2" style="font-size:14px;margin-top:14px">参考：基準を決めた過去分 ${rt.heavy_favorites||0}頭</h3>
+    <table class="ns-tbl"><thead><tr><th>判定</th><th>頭数</th><th>3着内率</th><th>複勝回収率</th></tr></thead><tbody>${(rt.by_verdict||[]).map(row).join('')}</tbody></table>
+    <p class="ns-note">過去分は結果を見てから基準を決めたため、当否の証拠にはしません。</p></section>`}
+  catch(e){el.innerHTML='<div class="ns-err">本命チェックの集計を取得できませんでした。</div>'}
 }
 function rate(x){return x==null?'—':(x*100).toFixed(1)+'%'}
 const NS_SYS={COLLECTING:['集計中','30レースまでは判定しません'],PASS:['人気を上回る','直近30レースで人気上位3頭より良い'],HOLD:['人気と同程度','直近30レースで人気上位3頭と同水準'],REVIEW:['人気を下回る','人気薄の昇格と学習の反映を自動で抑えています']};

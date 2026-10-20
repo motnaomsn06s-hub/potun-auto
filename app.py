@@ -53,7 +53,8 @@ def init():
    id BIGSERIAL PRIMARY KEY,at TEXT,race_key TEXT,slot INTEGER,kind TEXT,detail TEXT,duration_ms INTEGER,pid INTEGER
  );
  CREATE INDEX IF NOT EXISTS capture_log_race_at ON capture_log(race_key,at);
- CREATE TABLE IF NOT EXISTS final_odds(race_key TEXT PRIMARY KEY,fetched_at TEXT,payload TEXT)
+ CREATE TABLE IF NOT EXISTS final_odds(race_key TEXT PRIMARY KEY,fetched_at TEXT,payload TEXT);
+ CREATE TABLE IF NOT EXISTS favorite_checks(race_key TEXT PRIMARY KEY,horse INTEGER,odds DOUBLE PRECISION,base DOUBLE PRECISION,verdict TEXT,rule_version INTEGER,created_at TEXT)
  """
  for stmt in schema.split(";"):
   if stmt.strip(): c.execute(stmt)
@@ -831,10 +832,47 @@ def place_value_candidates(rows):
   except (ValueError,TypeError,KeyError):continue
  return sorted(out,key=lambda x:-x["score"])[:3]
 
+_FAV_STATE={"at":None,"data":None}
+def favorite_state(force=False):
+ """事前に記録した本命チェックの当否（結果確定分のみ）と、自動取捨の可否。10分キャッシュ。"""
+ now=datetime.now(JST)
+ if not force and _FAV_STATE["at"] and (now-_FAV_STATE["at"]).total_seconds()<600:return _FAV_STATE["data"]
+ c=con()
+ try:rows=[dict(x) for x in c.execute("""SELECT f.race_key,f.horse,f.verdict,x.first_horse,x.second_horse,x.third_horse,x.payload FROM favorite_checks f
+   JOIN results x USING(race_key) WHERE f.rule_version=%s""",(favorite_audit.RULE_VERSION,)).fetchall()]
+ finally:c.close()
+ out=[]
+ for x in rows:
+  top={x["first_horse"],x["second_horse"],x["third_horse"]};yen=None
+  try:
+   pl=json.loads(x["payload"] or "null")
+   if isinstance(pl,dict):
+    if pl.get("order") and pl.get("places"):top={int(a) for a,b in zip(pl["order"],pl["places"]) if int(b)<=3}
+    if pl.get("payouts",{}).get("複勝"):yen={int(e["combo"][0]):int(e["yen"]) for e in pl["payouts"]["複勝"]}.get(int(x["horse"]),0)
+  except Exception:pass
+  out.append({"verdict":x["verdict"],"placed":int(x["horse"]) in top,"place_yen":yen})
+ data=favorite_audit.validation(out);_FAV_STATE.update(at=now,data=data);return data
+def _latest_rows(key,slots=(3,4,5,10,15)):
+ c=con()
+ try:ss={int(x["slot"]):x["payload"] for x in c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall()}
+ finally:c.close()
+ for sl in slots:
+  try:
+   p=json.loads(ss[sl]) if sl in ss else None
+   if p and valid_payload(p):return sl,p.get("rows",[])
+  except Exception:continue
+ return None,[]
+
 def save_predictions(key,slot=3):
  # Persist the latest top-3 for validation at each stage. The UI can show a wider candidate pool
  # at 10m/5m, while the predictions table keeps the current top-3 and is overwritten at 3m FINAL.
- A=stage_rankings(key,slot);C=A[:3]
+ A=stage_rankings(key,slot)
+ # 本命チェック：検証で有効と確認できた時だけ、「危険」の1倍台を1番手から3番手へ下げる。
+ try:
+  st=favorite_state()
+  if st and st.get("enabled"):A=favorite_audit.demote(A,favorite_audit.check_rows(_latest_rows(key,(slot,))[1]),True)
+ except Exception:pass
+ C=A[:3]
  if not C:return []
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x.get("d1",0),x.get("d2",0),x.get("agree",0),datetime.now(JST).isoformat()))
@@ -1217,6 +1255,14 @@ def _capture_race(r):
     ON CONFLICT(race_key,slot) DO UPDATE SET fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload""",
     (r["race_key"],slot,data["fetched_at"],json.dumps(data,ensure_ascii=False)));c.commit();c.close();ev.append(f'{r["race_key"]}:{slot}')
    log(r["race_key"],slot,"OK",f'start={(post_time-capture_started).total_seconds()/60:.2f}m counts={data.get("counts")}',ms)
+   if slot==3:
+    # 本命チェックは発走前のFINAL時点で記録し、結果を見てから書き換えない（検証用）。
+    try:
+     chk=favorite_audit.check_rows(data.get("rows"))
+     if chk:
+      c=con();c.execute("INSERT INTO favorite_checks VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO NOTHING",
+        (r["race_key"],chk["horse"],chk["odds"],chk["base"],chk["verdict"],favorite_audit.RULE_VERSION,datetime.now(JST).isoformat()));c.commit();c.close()
+    except Exception as exc:log(r["race_key"],slot,"ERR_FAVORITE_CHECK",f"{type(exc).__name__}: {exc}")
    # Prediction generation must not occupy a scarce odds-capture worker.
    # The odds snapshot is committed first; prediction errors are logged independently.
    if slot in (10,5,4,3):
@@ -1585,6 +1631,18 @@ def _day_payload(day):
  finally:c.close()
  for r in rr:
   r["slots"]=sorted(set(slots.get(r["race_key"],[])),reverse=True);r["result"]=res.get(r["race_key"]);r["picks"]=picks.get(r["race_key"],[])[:3]
+ # 本命チェック（一覧のバッジ用）：その時点で最新のスナップショットから
+ if keys:
+  c=con()
+  try:
+   latest={}
+   for x in c.execute("SELECT DISTINCT ON (race_key) race_key,payload FROM snapshots WHERE race_key = ANY(%s) AND slot IN (3,4,5,10,15) ORDER BY race_key,slot ASC",(keys,)).fetchall():latest[x["race_key"]]=x["payload"]
+  finally:c.close()
+  for r in rr:
+   try:
+    p=json.loads(latest.get(r["race_key"]) or "null")
+    r["fav"]=favorite_audit.check_rows(p.get("rows")) if p and valid_payload(p) else None
+   except Exception:r["fav"]=None
  return rr
 @app.route("/api/day")
 def day_api():
@@ -1935,8 +1993,9 @@ def favorite_audit_rows():
 def favorite_audit_api():
  try:
   rows=favorite_audit_rows();out=favorite_audit.audit(rows)
-  out["examples"]=[{**r,"verdict":favorite_audit.signals(r)[0],"reasons":favorite_audit.signals(r)[1]} for r in sorted(rows,key=lambda z:z["race_key"],reverse=True)[:40]]
-  return jsonify(ok=True,**out)
+  out["examples"]=sorted(rows,key=lambda z:z["race_key"],reverse=True)[:40]
+  return jsonify(ok=True,retro=out,prospective=favorite_state(force=True),rule={"version":favorite_audit.RULE_VERSION,"danger_base":favorite_audit.DANGER_BASE,
+    "caution_base":favorite_audit.CAUTION_BASE,"min_danger":favorite_audit.MIN_DANGER,"min_gap":favorite_audit.MIN_GAP,"max_p":favorite_audit.MAX_P})
  except Exception as e:return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/roi")
 def roi_api():
@@ -2074,7 +2133,13 @@ def status():
    "validation_status":"NOT_VALIDATED",
    "note":"馬場状態は取得済み。予想順位への補正は検証前のため未適用です。" if going else "馬場状態を取得できていません。予想順位への補正は未適用です。"
   }
-  return jsonify(going_context=going_context,race=race_out,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
+  try:
+   fsl,frows=_latest_rows(key);fchk=favorite_audit.check_rows(frows)
+   if fchk:fchk.update(slot=fsl)
+   fst=favorite_state() or {}
+   favorite_check={"check":fchk,"enabled":bool(fst.get("enabled")),"need":fst.get("need"),"rule_version":favorite_audit.RULE_VERSION}
+  except Exception:favorite_check=None
+  return jsonify(favorite_check=favorite_check,going_context=going_context,race=race_out,snaps=S,display_snaps=RAW,stages=stages,predictions=display_predictions,rankings=rankings,result=result,result_eval=result_eval,place_value={"picks":place_saved,"stats":place_stats,"status":"EXPERIMENTAL","calibrated":False},race_signal=race_signal,race_flow=race_flow,guardrail=guardrail,profile_ready=profile_ready,legacy=legacy,signal_phase=phase,phase_slot=phase_slot,phase_note=phase_note,model={"status":model_state.get("status","COLLECTING"),"version":model_state.get("version",0),"trained_races":model_state.get("trained_races",0),"trained_samples":model_state.get("trained_samples",0),"heuristic_val":model_state.get("heuristic_val"),"learned_val":model_state.get("learned_val"),"blend_weight":(_model_blend_weight(model_state) if phase_slot==3 and full else 0.0)})
  except Exception as e:
   try:c.close()
   except Exception:pass
