@@ -103,7 +103,8 @@ class PostgresIntegration(unittest.TestCase):
             for _ in range(25):  # other completed rows from earlier tests may come first
                 a._PAYOUT_RETRY.clear()
                 a._payout_backfill_step(log)
-                if json.loads(self.sql("SELECT payload FROM results WHERE race_key=%s", (key,))[0]['payload']).get('payouts'):
+                cur = json.loads(self.sql("SELECT payload FROM results WHERE race_key=%s", (key,))[0]['payload'])
+                if isinstance(cur, dict) and cur.get('payouts'):
                     break
             a._final_odds_step(log, limit=10)
         pl = json.loads(self.sql("SELECT payload FROM results WHERE race_key=%s", (key,))[0]['payload'])
@@ -144,7 +145,8 @@ class PostgresIntegration(unittest.TestCase):
             a.sync_schedule(lambda *x: logs.append(x), force=True)
             a.sync_schedule(lambda *x: logs.append(x), force=True)   # idempotent
         rows = self.sql("SELECT race_key,start_iso,source,baba_name FROM races WHERE race_key LIKE '2026-10-20:18:%%' ORDER BY race")
-        self.assertEqual([r['race_key'] for r in rows], [f'2026-10-20:18:{i}' for i in range(8, 13)])
+        # 15:10: 7R (15:27) onward is still capturable; 6R (14:50) has started and is not backfilled.
+        self.assertEqual([r['race_key'] for r in rows], [f'2026-10-20:18:{i}' for i in range(7, 13)])
         self.assertTrue(all(r['source'] == 'auto' and r['baba_name'] == '浦和' for r in rows))
         self.assertEqual([x for x in logs if x[2].startswith('ERR')], [])
 
