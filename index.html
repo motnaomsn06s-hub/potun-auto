@@ -296,7 +296,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   --ns-ok:#7ED3A6;--ns-miss:#EE8C7F;
   --ns-head:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif;
   --ns-body:"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN",Meiryo,system-ui,sans-serif;
-  --ns-num:"Barlow Condensed","Arial Narrow",sans-serif;
+  --ns-num:"Barlow Condensed","Arial Narrow","Zen Kaku Gothic New","Hiragino Sans",sans-serif;
   --ns-safe-b:env(safe-area-inset-bottom,0px);--ns-safe-t:env(safe-area-inset-top,0px);
   /* The race page keeps its own markup; these remap its palette onto the night/sand theme. */
   --bg:var(--ns-night);--bg2:var(--ns-panel);--panel:var(--ns-panel);--panel2:#0A1220;--panel3:var(--ns-raise);
@@ -845,7 +845,7 @@ const NS_MISS={SCHEDULER_NOT_RUNNING:'サーバー停止',RESERVED_AFTER_WINDOW:
 const NS={route:'',date:null,races:[],venue:null,back:'#/',timers:[],loading:false};
 function nsStore(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
 function nsToday(){return new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'})}
-function nsDayLabel(d){const x=new Date(d+'T00:00:00+09:00');return `${x.getMonth()+1}月${x.getDate()}日（${NS_WD[x.getDay()]}）`}
+function nsDayLabel(d){const [y,m,dd]=String(d).split('-').map(Number);return `${m}月${dd}日（${NS_WD[new Date(Date.UTC(y,m-1,dd)).getUTCDay()]}）`}
 function nsHM(iso){return String(iso||'').slice(11,16)}
 function nsMins(iso,now){return (new Date(iso)-now)/60000}
 function nsVenues(races){const v=[...new Set(races.filter(r=>r.status!=='cancelled').map(r=>r.baba_name))];return v.sort((a,b)=>((NS_VENUE_ORDER.indexOf(a)+99)%99)-((NS_VENUE_ORDER.indexOf(b)+99)%99))}

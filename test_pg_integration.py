@@ -144,11 +144,26 @@ class PostgresIntegration(unittest.TestCase):
         with patch.object(a, 'soup', side_effect=fake), patch.object(a, 'datetime', Clock):
             a.sync_schedule(lambda *x: logs.append(x), force=True)
             a.sync_schedule(lambda *x: logs.append(x), force=True)   # idempotent
-        rows = self.sql("SELECT race_key,start_iso,source,baba_name FROM races WHERE race_key LIKE '2026-10-20:18:%%' ORDER BY race")
+        rows = self.sql("SELECT race_key,start_iso,source,baba_name,race_name,course,field_size FROM races WHERE race_key LIKE '2026-10-20:18:%%' ORDER BY race")
+        self.assertEqual((rows[0]['race_name'], rows[0]['course'], rows[0]['field_size']), ('ＨＢＡ日高軽種馬農業協同組合賞Ｃ１選抜馬', '左800m', 11))
         # 15:10: 7R (15:27) onward is still capturable; 6R (14:50) has started and is not backfilled.
         self.assertEqual([r['race_key'] for r in rows], [f'2026-10-20:18:{i}' for i in range(7, 13)])
         self.assertTrue(all(r['source'] == 'auto' and r['baba_name'] == '浦和' for r in rows))
         self.assertEqual([x for x in logs if x[2].startswith('ERR')], [])
+
+    def test_day_and_days_api(self):
+        a = self.app
+        key = '2001-03-04:36:7'
+        self.sql("INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked,source,race_name,course,field_size) VALUES(%s,'2001-03-04','36','門別',7,'2001-03-04T18:05:00+09:00','complete','2001-03-04T05:00:00+09:00',1,'auto','Ｃ３','右1200m',11)", (key,))
+        self.sql("INSERT INTO snapshots VALUES(%s,15,'x',%s),(%s,10,'x','{\"parser_version\": 1}')", (key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': []}), key))
+        self.sql("INSERT INTO results VALUES(%s,3,2,9,'x',%s)", (key, json.dumps({'order': [3, 2, 9], 'places': [1, 2, 2]})))
+        self.sql("INSERT INTO predictions(race_key,horse,rank,score,pop,odds,d1,d2,agree,created_at) VALUES(%s,9,1,1,1,1,0,0,0,'x'),(%s,4,2,1,1,1,0,0,0,'x')", (key, key))
+        d = a.app.test_client().get('/api/day?date=2001-03-04').json
+        r = d['races'][0]
+        self.assertEqual((r['race_name'], r['course'], r['field_size'], r['slots'], r['picks']), ('Ｃ３', '右1200m', 11, [15], [9, 4]))
+        self.assertEqual(r['result'], {'order': [3, 2, 9], 'places': [1, 2, 2]})
+        days = a.app.test_client().get('/api/days').json['days']
+        self.assertIn({'date': '2001-03-04', 'races': 1, 'complete': 1, 'venues': '門別'}, days)
 
     def test_advisory_lease_is_exclusive(self):
         a = self.app
