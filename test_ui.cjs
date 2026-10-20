@@ -46,11 +46,19 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
  ctx.NS.venue='盛岡';out=ctx.nsDayHTML('2026-10-20',races,now);
  assert(out.includes('ns-race off'),'cancelled race dimmed');assert(!out.includes('class="ns-race" data-race="a2"'),'other venue rows hidden');assert(out.includes('class="ns-race" data-race="b2"'));
 
+ // 3b. A future (reserved) day never says 完了 and shows the first post time.
+ const fut=[R('f1','浦和',1,'10:40'),R('f2','浦和',2,'11:10')].map(r=>Object.assign(r,{date:'2026-10-21',start_iso:r.start_iso.replace('2026-10-20','2026-10-21')}));
+ ctx.NS.venue=null;const fo=ctx.nsDayHTML('2026-10-21',fut,now);
+ assert(!fo.includes('完了'),'future day must not say 完了');assert(fo.includes('<small>1R発走・全2レース</small><b>10:40</b>'));assert(fo.includes('発走前'));assert(fo.includes('<span class="r">明日</span>'));
  ctx.nsToday=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
  // 4. Past days list excludes the removed 2026-10-07 and links today to the home view.
- ctx.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true,days:[{date:ctx.nsToday(),races:48,complete:20,venues:'門別・浦和'},{date:'2026-10-07',races:9,complete:9,venues:'大井'},{date:'2026-10-05',races:10,complete:10,venues:'川崎'}]})});
- await ctx.nsShowDays();
- assert(!elements.nsView.innerHTML.includes('10月7日'));assert(elements.nsView.innerHTML.includes('#/past/2026-10-05'));assert(elements.nsView.innerHTML.includes('href="#/"'));
+ const tomorrow=ctx.nsAddDays(ctx.nsToday(),1);
+ ctx.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true,days:[{date:tomorrow,races:40,complete:0,venues:'門別・浦和'},{date:ctx.nsToday(),races:48,complete:20,venues:'門別・浦和'},{date:'2026-10-07',races:9,complete:9,venues:'大井'},{date:'2026-10-05',races:10,complete:10,venues:'川崎'}]})});
+ await ctx.nsShowDays();const pv=elements.nsView.innerHTML;
+ assert(!pv.includes('10月7日'));assert(pv.includes('#/past/2026-10-05'));
+ assert(pv.indexOf('予約済み')>=0&&pv.indexOf('予約済み')<pv.indexOf('過去の開催'),'reserved days listed apart from past');
+ assert(pv.includes('明日</b>')&&pv.includes('<em>40レース</em>'));assert(!pv.includes('<em>0/40</em>'));
+ assert(!pv.includes('href="#/past/'+ctx.nsToday()+'"'),'today is not listed as past');
 
  // 5. Successful cancel requires the server to confirm status=cancelled, then returns to the list.
  ctx.NS.back='#/';ctx.NS.date=null;
@@ -62,7 +70,7 @@ const el=()=>({innerHTML:'',textContent:'',hidden:false,style:{display:'block'},
 
  // 5b. Heavy-favourite verdict shows as a badge on the row.
  const withFav=races.map(r=>r.race_key==='b2'?Object.assign({},r,{fav:{horse:4,odds:1.4,verdict:'危険'}}):r);
- assert(ctx.nsDayHTML('2026-10-20',withFav,now).includes('<span class="ns-fav 危険">本命4番 危険</span>'));
+ ctx.NS.venue='盛岡';assert(ctx.nsDayHTML('2026-10-20',withFav,now).includes('<span class="ns-fav 危険">本命4番 危険</span>'));
  // 6. Race-page labels are shown in Japanese; logic keys are untouched.
  const J=ctx.nsJaText;
  assert.equal(J('10分前CANDIDATE待ち'),'10分前候補待ち');assert.equal(J('S PRIME'),'S 最強');assert.equal(J('FINAL順'),'最終順');
