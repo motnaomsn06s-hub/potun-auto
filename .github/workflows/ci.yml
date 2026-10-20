@@ -1,0 +1,52 @@
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Disposable CI database only. Never the production DATABASE_URL.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      ODDS_SCOPE_TEST_DB: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Unit and PostgreSQL integration tests
+        shell: bash
+        run: |
+          set +e
+          python -m unittest -v test_reliability test_scheduler test_race3d test_capture_health test_pg_integration > test-output.txt 2>&1
+          code=$?
+          cat test-output.txt
+          # Surface failures as annotations so they are readable without downloading logs.
+          python3 - <<'PY'
+          import re
+          t = open('test-output.txt', encoding='utf-8').read()
+          for block in re.split(r'\n={50,}\n', t)[1:]:
+              msg = block.strip()[:3000].replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+              print('::error::' + msg)
+          print('::notice::' + (t.strip().splitlines() or ['no output'])[-1])
+          PY
+          exit $code
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: UI regression test
+        run: node test_ui.cjs

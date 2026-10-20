@@ -2,7 +2,7 @@ from flask import Flask,request,jsonify,send_from_directory
 import requests,re,math,os,json
 import psycopg
 from psycopg.rows import dict_row
-from capture_timing import capture_slot, capture_still_valid
+from capture_timing import capture_slot, capture_still_valid, SLOT_WINDOWS
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone,timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1118,6 +1118,18 @@ def parse_result(s):
   if len(nums)>=3 and nums[0] in (1,2,3) and 1<=nums[2]<=18:rows.append((nums[0],nums[2]))
  d=dict(rows);return [d.get(1),d.get(2),d.get(3)]
 _RESULT_RETRY={}
+_PROFILE_RETRY={}
+LEARNING_REQUIRED_SLOTS=(15,10,5,3)  # final_features() needs these; 4 is optional
+
+def _missing_learning_slots(key):
+ """Which required snapshots are absent or from an old parser. Used to explain samples=0."""
+ c=con();rows=c.execute("SELECT slot,payload FROM snapshots WHERE race_key=%s",(key,)).fetchall();c.close()
+ ok=set()
+ for x in rows:
+  try:
+   if valid_payload(json.loads(x["payload"])):ok.add(int(x["slot"]))
+  except Exception:pass
+ return [s for s in LEARNING_REQUIRED_SLOTS if s not in ok]
 def _slot_soon(mins,ahead=1.5):
  """True when a capture window is open now or opens within `ahead` minutes."""
  steps=int(ahead/0.25)
@@ -1207,8 +1219,14 @@ def due(capture=True,maintenance=True,async_capture=False):
     mins=(datetime.fromisoformat(r["start_iso"])-datetime.now(JST)).total_seconds()/60
     if 16<=mins<=360:
      try:
+      last_try=_PROFILE_RETRY.get(r["race_key"])
+      if last_try and datetime.now(JST)-last_try<timedelta(minutes=10):continue
       if not load_profiles(r["race_key"]):
-       get_profiles(r);ev.append(f'{r["race_key"]}:PROFILE');log(r["race_key"],None,"PROFILE")
+       _PROFILE_RETRY[r["race_key"]]=datetime.now(JST)
+       # An empty official page used to be retried every 15 s forever; back off and say so.
+       got=get_profiles(r)
+       if got:ev.append(f'{r["race_key"]}:PROFILE');log(r["race_key"],None,"PROFILE",f"horses={len(got)}")
+       else:ev.append(f'{r["race_key"]}:PROFILE_EMPTY');log(r["race_key"],None,"PROFILE_EMPTY","official entry table returned no horses; retry in 10 min")
        break  # at most one profile download per tick
      except Exception as e:ev.append("ERR profile "+str(e));log(r["race_key"],None,"ERR_PROFILE",str(e))
   # Recover learning samples from already stored results and valid odds snapshots.
@@ -1220,6 +1238,8 @@ def due(capture=True,maintenance=True,async_capture=False):
       FROM races r JOIN results x ON x.race_key=r.race_key
       WHERE r.status='complete' AND NOT EXISTS
         (SELECT 1 FROM learning_samples l WHERE l.race_key=r.race_key)
+        AND (SELECT COUNT(DISTINCT s.slot) FROM snapshots s
+             WHERE s.race_key=r.race_key AND s.slot IN (15,10,5,3))=4
       ORDER BY x.fetched_at DESC LIMIT 8""").fetchall()
     c.close()
     repaired=0
@@ -1250,7 +1270,11 @@ def due(capture=True,maintenance=True,async_capture=False):
      if all(rs):
       c=con();c.execute("INSERT INTO results VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key) DO UPDATE SET first_horse=EXCLUDED.first_horse,second_horse=EXCLUDED.second_horse,third_horse=EXCLUDED.third_horse,fetched_at=EXCLUDED.fetched_at,payload=EXCLUDED.payload",(r["race_key"],*rs,datetime.now(JST).isoformat(),json.dumps(rs)));c.execute("UPDATE races SET result_checked=1,status='complete' WHERE race_key=%s",(r["race_key"],));c.commit();c.close()
       n=store_learning_samples(r["race_key"],rs);tr=maybe_train() if n else {"status":"WAITING_ODDS"};ev.append(f'{r["race_key"]}:RESULT:{rs}')
-      log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}")
+      why=""
+      if not n:
+       try:why=f" missing_slots={_missing_learning_slots(r['race_key'])}"
+       except Exception:why=""
+      log(r["race_key"],None,"RESULT",f"{rs} samples={n} train={(tr or {}).get('status')}{why}")
      else:log(r["race_key"],None,"RESULT_PENDING",str(rs))
     except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
  finally:
@@ -1350,6 +1374,10 @@ def cancel():
    # Only the reservation status changes. Snapshots, predictions, results and learning data are kept.
    cur=c.execute("UPDATE races SET status='cancelled' WHERE race_key=%s RETURNING race_key",(key,))
    changed=cur.fetchone()
+   if changed:
+    # Timestamp the cancellation so later diagnostics do not blame the scheduler for skipped slots.
+    c.execute("INSERT INTO capture_log(at,race_key,slot,kind,detail,duration_ms,pid) VALUES(%s,%s,%s,%s,%s,%s,%s)",
+              (datetime.now(JST).isoformat(),key,None,"CANCELLED","reservation cancelled by user",None,os.getpid()))
    c.commit()
    after=c.execute("SELECT status FROM races WHERE race_key=%s",(key,)).fetchone() if changed else None
   finally:
@@ -1370,7 +1398,7 @@ _capture_jobs_guard=threading.Lock()
 _capture_pool=None
 _maintenance_running=False
 _maintenance_guard=threading.Lock()
-SCHEDULER_VERSION="nar-isolated-capture-20261018"
+SCHEDULER_VERSION="nar-heartbeat-audit-20261020"
 
 def _leased_work(key,fn):
  c=con()
@@ -1427,13 +1455,41 @@ def _start_tick(source):
  return False
 # サーバーが起きている間は、自分で15秒ごとに定期処理を回す（cron-job.orgは起こすだけでよい）
 # 4分前などの取得窓は1分幅しかないため、処理時間に関係なく窓の中で必ず確認できるようにする。
+BEAT_LOG_SECONDS=60      # one durable BEAT row per process per minute -> downtime is provable afterwards
+SCHEDULER_GAP_SECONDS=90 # a heartbeat gap longer than this means captures could not have run
+def _record_heartbeat(now,first=False):
+ """Persist scheduler liveness. Render Free stops the process on idle; a gap between the stored
+ heartbeat and this process's first beat is logged as SCHEDULER_GAP so missed slots have a cause."""
+ c=con()
+ try:
+  prev=c.execute("SELECT v FROM app_meta WHERE k='scheduler_beat'").fetchone()
+  c.execute("INSERT INTO app_meta(k,v) VALUES('scheduler_beat',%s) ON CONFLICT(k) DO UPDATE SET v=GREATEST(app_meta.v,EXCLUDED.v)",(now.isoformat(),))
+  c.commit()
+ finally:c.close()
+ rows=[]
+ if first:
+  rows.append((now.isoformat(),None,None,"PROCESS_START",f"version={SCHEDULER_VERSION} process_started={_PROCESS_STARTED}",None,os.getpid()))
+  if prev and prev.get("v"):
+   try:gap=(now-datetime.fromisoformat(prev["v"])).total_seconds()
+   except Exception:gap=None
+   if gap is not None and gap>SCHEDULER_GAP_SECONDS:
+    rows.append((now.isoformat(),None,None,"SCHEDULER_GAP",f"down_from={prev['v']} up_at={now.isoformat()} gap_s={int(gap)}",int(gap*1000),os.getpid()))
+ else:
+  rows.append((now.isoformat(),None,None,"BEAT",f"pid={os.getpid()}",None,os.getpid()))
+ _write_capture_log(rows)
+
 def _auto_loop():
- wait=threading.Event()
+ wait=threading.Event();first=True;last_beat_log=None
  while True:
-  _loop_state["beat"]=datetime.now(JST).isoformat()
+  now=datetime.now(JST);_loop_state["beat"]=now.isoformat()
   try:_start_tick("loop")
   except Exception as e:_tick_state.update(error=str(e))
-  wait.wait(15)
+  if first or last_beat_log is None or (now-last_beat_log).total_seconds()>=BEAT_LOG_SECONDS:
+   try:
+    _record_heartbeat(now,first=first);last_beat_log=now;first=False
+   except Exception:pass  # diagnostics must never stop the capture loop
+  elapsed=(datetime.now(JST)-now).total_seconds()
+  wait.wait(max(1.0,15-elapsed))
 def ensure_auto_loop():
  """Start the 15-second loop in THIS process. Threads do not survive fork (gunicorn --preload,
  worker restarts), so the loop is (re)started per process and whenever its thread has died."""
@@ -1481,10 +1537,95 @@ def capture_log():
     snaps.append({"slot":x["slot"],"fetched_at":x["fetched_at"],"capture_started_at":p.get("capture_started_at"),"valid":valid_payload(p)})
    race=c.execute("SELECT * FROM races WHERE race_key=%s",(key,)).fetchone()
    c.close();return jsonify(ok=True,race=dict(race) if race else None,snapshots=snaps,log=rows,scheduler=_scheduler_info())
-  rows=[dict(x) for x in c.execute("SELECT at,race_key,slot,kind,detail,duration_ms,pid FROM capture_log WHERE kind!='TICK' ORDER BY at DESC LIMIT %s",(limit,)).fetchall()]
+  rows=[dict(x) for x in c.execute("SELECT at,race_key,slot,kind,detail,duration_ms,pid FROM capture_log WHERE kind NOT IN ('TICK','BEAT') ORDER BY at DESC LIMIT %s",(limit,)).fetchall()]
   c.close();return jsonify(ok=True,log=rows,scheduler=_scheduler_info())
  except Exception as e:
   try:c.close()
+  except Exception:pass
+  return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
+SLOT_REASON_JA={"OK":"取得成功","PENDING":"取得時刻前","OPEN":"取得窓が開いています","INVALID_PAYLOAD":"旧形式データのみ（再取得不可）",
+ "SCHEDULER_NOT_RUNNING":"サーバー停止中（Render Free休止・再起動）で取得処理が動いていません","RESERVED_AFTER_WINDOW":"取得時刻の後に予約されました",
+ "CANCELLED":"予約取消済み","NOT_SCHEDULED":"サーバーは稼働中だがこのレースは監視対象外（取消・状態不一致）",
+ "NOT_ATTEMPTED":"監視中だが取得処理が実行されませんでした（要調査）","ERR":"取得エラー","SKIPPED_LATE":"取得完了が窓を過ぎたため破棄"}
+def _iso(v):
+ try:return datetime.fromisoformat(v) if v else None
+ except Exception:return None
+def _slot_health(slot,race,post,now,snap,race_logs,ticks,alive_at):
+ lo,hi=SLOT_WINDOWS[slot];w_open=post-timedelta(minutes=hi);w_close=post-timedelta(minutes=lo)
+ out={"slot":slot,"window_from":w_open.isoformat(),"window_to":w_close.isoformat()}
+ if snap is not None:
+  if snap["valid"]:out.update(status="OK",fetched_at=snap["fetched_at"],capture_started_at=snap.get("capture_started_at"));return out
+  out.update(status="MISSED",reason="INVALID_PAYLOAD")
+ elif now<w_open:out["status"]="PENDING";return out
+ elif now<=w_close:out["status"]="OPEN";return out
+ else:out["status"]="MISSED"
+ if out.get("reason"):out["reason_ja"]=SLOT_REASON_JA[out["reason"]];return out
+ in_win=lambda t:t is not None and w_open<=t<=w_close
+ errs=[x for x in race_logs if x["slot"]==slot and x["kind"] in ("ERR","SKIPPED_LATE") and in_win(_iso(x["at"]))]
+ cancelled=[_iso(x["at"]) for x in race_logs if x["kind"]=="CANCELLED"]
+ n_ticks=sum(1 for t in ticks if in_win(t));alive=any(in_win(t) for t in alive_at)
+ created=_iso(race.get("created_at"))
+ if errs:reason=errs[-1]["kind"];out["detail"]=errs[-1]["detail"];out["attempts"]=len(errs)
+ elif created and created>w_close:reason="RESERVED_AFTER_WINDOW"
+ elif any(t and t<=w_close for t in cancelled):reason="CANCELLED"
+ elif n_ticks:reason="NOT_ATTEMPTED"
+ elif not alive:reason="SCHEDULER_NOT_RUNNING"
+ else:reason="NOT_SCHEDULED"
+ out.update(reason=reason,reason_ja=SLOT_REASON_JA[reason],ticks_in_window=n_ticks)
+ return out
+@app.route("/api/capture-health")
+def capture_health():
+ """Read-only per-race audit of the 15/10/5/4/3 captures with an explicit cause for every miss."""
+ c=None
+ try:
+  day=request.args.get("date") or datetime.now(JST).date().isoformat()
+  d0=datetime.fromisoformat(day).date();lo=f"{d0.isoformat()}T00:00:00";hi=f"{(d0+timedelta(days=1)).isoformat()}T00:00:00"
+  now=datetime.now(JST);c=con()
+  races=[dict(x) for x in c.execute("SELECT * FROM races WHERE date=%s ORDER BY start_iso,race_key",(d0.isoformat(),)).fetchall()]
+  keys=[r["race_key"] for r in races];snaps={};logs={};ticks={};samples={};results={}
+  if keys:
+   for x in c.execute("SELECT race_key,slot,fetched_at,payload FROM snapshots WHERE race_key = ANY(%s)",(keys,)).fetchall():
+    try:p=json.loads(x["payload"])
+    except Exception:p={}
+    snaps.setdefault(x["race_key"],{})[int(x["slot"])]={"valid":valid_payload(p),"fetched_at":x["fetched_at"],"capture_started_at":p.get("capture_started_at"),"counts":p.get("counts")}
+   for x in c.execute("SELECT at,race_key,slot,kind,detail FROM capture_log WHERE race_key = ANY(%s) AND kind!='TICK' ORDER BY at",(keys,)).fetchall():
+    logs.setdefault(x["race_key"],[]).append(dict(x))
+   for x in c.execute("SELECT race_key,COUNT(*) AS n FROM learning_samples WHERE race_key = ANY(%s) GROUP BY race_key",(keys,)).fetchall():samples[x["race_key"]]=int(x["n"])
+   for x in c.execute("SELECT race_key,first_horse,second_horse,third_horse FROM results WHERE race_key = ANY(%s)",(keys,)).fetchall():results[x["race_key"]]=[x["first_horse"],x["second_horse"],x["third_horse"]]
+  alive_at=[];gaps=[]
+  for x in c.execute("SELECT at,kind,detail,pid FROM capture_log WHERE at>=%s AND at<%s AND race_key IS NULL ORDER BY at",(lo,hi)).fetchall():
+   t=_iso(x["at"])
+   if x["kind"]=="TICK":
+    for tok in (x["detail"] or "").split():
+     k,_,_m=tok.rpartition("@")
+     if k:ticks.setdefault(k,[]).append(t)
+   if x["kind"] in ("TICK","BEAT","PROCESS_START"):alive_at.append(t)
+   if x["kind"]=="SCHEDULER_GAP":gaps.append({"at":x["at"],"detail":x["detail"],"pid":x["pid"]})
+  # Any row written by the app (captures, results, profiles) also proves the process was alive.
+  for rows in logs.values():alive_at.extend(_iso(x["at"]) for x in rows)
+  beat=c.execute("SELECT v FROM app_meta WHERE k='scheduler_beat'").fetchone();c.close();c=None
+  out=[];due_n=ok_n=0;causes={}
+  for r in races:
+   post=_iso(r["start_iso"])
+   if post is None:continue
+   slots=[_slot_health(s,r,post,now,snaps.get(r["race_key"],{}).get(s),logs.get(r["race_key"],[]),ticks.get(r["race_key"],[]),alive_at) for s in (15,10,5,4,3)]
+   for s in slots:
+    if s["status"] in ("OK","MISSED"):
+     due_n+=1;ok_n+=s["status"]=="OK"
+     if s["status"]=="MISSED":causes[s["reason"]]=causes.get(s["reason"],0)+1
+   miss_learn=[s for s in LEARNING_REQUIRED_SLOTS if not (snaps.get(r["race_key"],{}).get(s) or {}).get("valid")]
+   out.append({"race_key":r["race_key"],"baba_name":r.get("baba_name"),"race":r.get("race"),"start_iso":r["start_iso"],"status":r.get("status"),
+    "captured":sum(s["status"]=="OK" for s in slots),"slots":slots,"result":results.get(r["race_key"]),"learning_samples":samples.get(r["race_key"],0),
+    "learning_missing_slots":miss_learn,"markets":{str(k):v.get("counts") for k,v in snaps.get(r["race_key"],{}).items()}})
+  b=_iso(beat["v"]) if beat else None;age=(now-b).total_seconds() if b else None
+  return jsonify(ok=True,date=d0.isoformat(),now=now.isoformat(),races=out,
+   summary={"slots_due":due_n,"slots_ok":ok_n,"success_rate":round(ok_n/due_n,3) if due_n else None,"missed_by_reason":causes,
+            "races_all5":sum(x["captured"]==5 for x in out),"races":len(out)},
+   scheduler={**_scheduler_info(),"last_beat":beat["v"] if beat else None,"beat_age_s":round(age,1) if age is not None else None,
+              "stale":bool(age is None or age>SCHEDULER_GAP_SECONDS),"gaps_today":gaps})
+ except Exception as e:
+  try:
+   if c:c.close()
   except Exception:pass
   return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/status")
