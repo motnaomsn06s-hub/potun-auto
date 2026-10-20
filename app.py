@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading,random
 import roi as roi_eval
 import favorite_audit
+import signal_eval
 from nar_pages import (parse_venue_days,parse_race_list,parse_payouts,parse_win_place,parse_today_grid,
                        cancelled_races,stored_baba,VENUE_NAMES)
 
@@ -54,6 +55,8 @@ def init():
  );
  CREATE INDEX IF NOT EXISTS capture_log_race_at ON capture_log(race_key,at);
  CREATE TABLE IF NOT EXISTS final_odds(race_key TEXT PRIMARY KEY,fetched_at TEXT,payload TEXT);
+ CREATE TABLE IF NOT EXISTS signal_records(race_key TEXT,horse INTEGER,rank INTEGER,grade TEXT,signal_index DOUBLE PRECISION,confirmations INTEGER,pop INTEGER,odds DOUBLE PRECISION,created_at TEXT,PRIMARY KEY(race_key,horse));
+ CREATE TABLE IF NOT EXISTS signal_retro(race_key TEXT PRIMARY KEY,payload TEXT,computed_at TEXT);
  CREATE TABLE IF NOT EXISTS favorite_checks(race_key TEXT PRIMARY KEY,horse INTEGER,odds DOUBLE PRECISION,base DOUBLE PRECISION,verdict TEXT,rule_version INTEGER,created_at TEXT)
  """
  for stmt in schema.split(";"):
@@ -877,6 +880,12 @@ def save_predictions(key,slot=3):
  c=con();c.execute("DELETE FROM predictions WHERE race_key=%s",(key,))
  for i,x in enumerate(C,1):c.execute("INSERT INTO predictions VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(race_key,horse) DO UPDATE SET rank=EXCLUDED.rank,score=EXCLUDED.score,pop=EXCLUDED.pop,odds=EXCLUDED.odds,d1=EXCLUDED.d1,d2=EXCLUDED.d2,agree=EXCLUDED.agree,created_at=EXCLUDED.created_at",(key,x["horse"],i,x["score"],x["pop"],x["odds"],x.get("d1",0),x.get("d2",0),x.get("agree",0),datetime.now(JST).isoformat()))
  if slot==3:
+  # シグナル等級も発走前のFINALで一度だけ記録し、結果を見てから書き換えない（等級別の成績の検証用）。
+  if not c.execute("SELECT 1 FROM signal_records WHERE race_key=%s LIMIT 1",(key,)).fetchone():
+   now_iso=datetime.now(JST).isoformat()
+   for i,x in enumerate(A,1):
+    c.execute("INSERT INTO signal_records VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+      (key,int(x["horse"]),i,x.get("signal_grade") or "D",x.get("signal_index"),x.get("confirmations"),x.get("pop"),x.get("odds"),now_iso))
   # Persist once, at FINAL, so results cannot retroactively change the selections.
   existing=c.execute("SELECT 1 FROM place_value_picks WHERE race_key=%s LIMIT 1",(key,)).fetchone()
   if not existing:
@@ -1415,6 +1424,54 @@ def _payout_backfill_step(log):
   except Exception as exc:log(r["race_key"],None,"ERR_PAYOUT_BACKFILL",f"{type(exc).__name__}: {exc}")
   return
 
+def _signal_retro_step(log,limit=4):
+ """過去の確定レースについて、保存済みオッズからFINAL時点の等級を再計算して残す（参考値）。
+ 学習モデルは使わない（そのレースを学習済みの可能性があるため）。少しずつ進める。"""
+ c=con()
+ try:keys=[x["race_key"] for x in c.execute("""SELECT x.race_key FROM results x WHERE x.payload LIKE %s
+   AND NOT EXISTS (SELECT 1 FROM signal_retro s WHERE s.race_key=x.race_key)
+   AND EXISTS (SELECT 1 FROM snapshots n WHERE n.race_key=x.race_key AND n.slot=3)
+   ORDER BY x.fetched_at DESC LIMIT %s""",('%"payouts"%',limit)).fetchall()]
+ finally:c.close()
+ for k in keys:
+  try:
+   full=final_features(k);A=rank_features(full,{}) if full else rank_features(staged_features(k,3),{})
+   rows=[{"horse":int(x["horse"]),"rank":i,"grade":x.get("signal_grade") or "D","signal_index":x.get("signal_index"),"pop":x.get("pop"),"odds":x.get("odds")} for i,x in enumerate(A,1)]
+   c=con();c.execute("INSERT INTO signal_retro VALUES(%s,%s,%s) ON CONFLICT(race_key) DO NOTHING",(k,json.dumps(rows),datetime.now(JST).isoformat()));c.commit();c.close()
+  except Exception as exc:
+   log(k,None,"ERR_SIGNAL_RETRO",f"{type(exc).__name__}: {exc}")
+   c=con();c.execute("INSERT INTO signal_retro VALUES(%s,%s,%s) ON CONFLICT(race_key) DO NOTHING",(k,"[]",datetime.now(JST).isoformat()));c.commit();c.close()
+ if keys:log(None,None,"SIGNAL_RETRO",f"races={len(keys)}")
+ return len(keys)
+
+def _signal_rows(records,results):
+ out=[]
+ for r in records:
+  res=results.get(r["race_key"])
+  if not res:continue
+  top,place,win,priced=signal_eval.result_lookup(res)
+  if not priced:continue
+  h=int(r["horse"]);out.append({"race_key":r["race_key"],"horse":h,"rank":r["rank"],"grade":r["grade"],"pop":r.get("pop"),"placed":h in top,"place_yen":place.get(h,0),"win_yen":win.get(h,0)})
+ return out
+
+_SIG_CACHE={"at":None,"data":None}
+def signal_grades():
+ now=datetime.now(JST)
+ if _SIG_CACHE["at"] and (now-_SIG_CACHE["at"]).total_seconds()<300:return _SIG_CACHE["data"]
+ c=con()
+ try:
+  results={x["race_key"]:dict(x) for x in c.execute("SELECT race_key,first_horse,second_horse,third_horse,payload FROM results").fetchall()}
+  pro=[dict(x) for x in c.execute("SELECT race_key,horse,rank,grade,pop FROM signal_records").fetchall()]
+  retro=[]
+  for x in c.execute("SELECT race_key,payload FROM signal_retro").fetchall():
+   try:retro+= [{**y,"race_key":x["race_key"]} for y in json.loads(x["payload"] or "[]")]
+   except Exception:pass
+  pending=c.execute("""SELECT COUNT(*) AS n FROM results x WHERE x.payload LIKE %s AND NOT EXISTS (SELECT 1 FROM signal_retro s WHERE s.race_key=x.race_key)
+    AND EXISTS (SELECT 1 FROM snapshots n WHERE n.race_key=x.race_key AND n.slot=3)""",('%"payouts"%',)).fetchone()["n"]
+ finally:c.close()
+ data={"prospective":signal_eval.evaluate(_signal_rows(pro,results),True),"retro":signal_eval.evaluate(_signal_rows(retro,results),False),"retro_pending":int(pending)}
+ _SIG_CACHE.update(at=now,data=data);return data
+
 def due(capture=True,maintenance=True,async_capture=False):
  now=datetime.now(JST);pid=os.getpid();logs=[]
  def log(key,slot,kind,detail="",ms=None):logs.append((datetime.now(JST).isoformat(),key,slot,kind,str(detail)[:500],ms,pid))
@@ -1511,7 +1568,7 @@ def due(capture=True,maintenance=True,async_capture=False):
      elif not result_complete(places):log(r["race_key"],None,"RESULT_PENDING",f"{rs} places={places}")
     except Exception as e:ev.append("ERR result "+str(e));log(r["race_key"],None,"ERR_RESULT",f"{type(e).__name__}: {e}")
  # Additional maintenance, each step yields to pending captures and isolates its own errors.
-  for step in (lambda:_final_odds_step(log),lambda:sync_schedule(log),lambda:_payout_backfill_step(log),lambda:_train_if_due(log)):
+  for step in (lambda:_final_odds_step(log),lambda:sync_schedule(log),lambda:_payout_backfill_step(log),lambda:_train_if_due(log),lambda:_signal_retro_step(log)):
    if not maintenance or _capture_pending(rr):break
    try:step()
    except Exception as exc:log(None,None,"ERR_MAINTENANCE_STEP",f"{type(exc).__name__}: {exc}")
@@ -1996,6 +2053,10 @@ def favorite_audit_api():
   out["examples"]=sorted(rows,key=lambda z:z["race_key"],reverse=True)[:40]
   return jsonify(ok=True,retro=out,prospective=favorite_state(force=True),rule={"version":favorite_audit.RULE_VERSION,"danger_base":favorite_audit.DANGER_BASE,
     "caution_base":favorite_audit.CAUTION_BASE,"min_danger":favorite_audit.MIN_DANGER,"min_gap":favorite_audit.MIN_GAP,"max_p":favorite_audit.MAX_P})
+ except Exception as e:return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
+@app.route("/api/signal-grades")
+def signal_grades_api():
+ try:return jsonify(ok=True,**signal_grades())
  except Exception as e:return jsonify(ok=False,error=f"{type(e).__name__}: {str(e)[:200]}"),503
 @app.route("/api/roi")
 def roi_api():

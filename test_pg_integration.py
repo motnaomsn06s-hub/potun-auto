@@ -186,6 +186,26 @@ class PostgresIntegration(unittest.TestCase):
         st = a.app.test_client().get('/api/status?race_key=' + key).json
         self.assertEqual(st['favorite_check']['check']['horse'], 4)
 
+    def test_signal_grades_on_real_schema(self):
+        a = self.app
+        key = '2001-07-08:18:3'
+        self.sql("INSERT INTO races(race_key,date,baba,baba_name,race,start_iso,status,created_at,result_checked) VALUES(%s,'2001-07-08','18','浦和',3,'2001-07-08T13:20:00+09:00','complete','x',1)", (key,))
+        self.sql("INSERT INTO results VALUES(%s,5,1,8,'x',%s)", (key, json.dumps({'order': [5, 1, 8], 'places': [1, 2, 3], 'payouts': {'複勝': [{'combo': [5], 'yen': 300}, {'combo': [1], 'yen': 120}, {'combo': [8], 'yen': 400}], '単勝': [{'combo': [5], 'yen': 900}]}})))
+        self.sql("INSERT INTO signal_records VALUES(%s,5,1,'A',66,3,4,8.0,'x'),(%s,2,2,'B',55,1,1,1.8,'x')", (key, key))
+        self.sql("INSERT INTO snapshots VALUES(%s,3,'x',%s)", (key, json.dumps({'parser_version': a.DATA_VERSION, 'rows': []})))
+        with patch.object(a, 'final_features', return_value=[]), patch.object(a, 'rank_features', return_value=[{'horse': 5, 'signal_grade': 'S', 'signal_index': 80, 'pop': 4, 'odds': 8.0}]):
+            for _ in range(30):
+                if not a._signal_retro_step(lambda *x: None):
+                    break
+        a._SIG_CACHE['at'] = None
+        body = a.app.test_client().get('/api/signal-grades').json
+        self.assertTrue(body['ok'], body)
+        A = [g for g in body['prospective']['by_grade'] if g['grade'] == 'A'][0]
+        self.assertEqual((A['horses'], A['place_rate'], A['place_roi'], A['win_roi']), (1, 1.0, 3.0, 9.0))
+        S = [g for g in body['retro']['by_grade'] if g['grade'] == 'S'][0]
+        self.assertGreaterEqual(S['horses'], 1)
+        self.assertEqual(body['retro_pending'], 0)
+
     def test_advisory_lease_is_exclusive(self):
         a = self.app
         inner = []
